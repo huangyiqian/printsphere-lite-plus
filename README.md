@@ -23,6 +23,11 @@ PrintSphere Lite 是一款基于 ESP8266EX 和 240x240 ST7789 屏幕的 Bambu �
 
 当前固件是按本项目使用的 SD2 硬件接线适配的。其他硬件需要检查 `platformio.ini` 和 `include/User_Setup.h` 中的屏幕引脚。
 
+## 外壳 3D 模型
+
+- 中国大陆地区：[MakerWorld 中国大陆模型页](https://makerworld.com.cn/models/2587841?appSharePlatform=copy)
+- 海外地区：[MakerWorld 国际模型页](https://makerworld.com/models/2891359?appSharePlatform=copy)
+
 ## 目录结构
 
 ```text
