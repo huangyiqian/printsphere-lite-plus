@@ -1,0 +1,30 @@
+# PlatformIO / Arduino build output
+.pio/
+.pio-*/
+.pio-venv/
+.platformio-core/
+.vscode/
+
+# Runtime data and private customer configuration
+companion/data/*
+!companion/data/.gitignore
+data/*
+!data/.gitignore
+*.log
+
+# Bundled runtimes and binary helper tools are shipped in release packages,
+# but they should not be committed to the source repository.
+companion/node/
+刷固件工具/tools/*.exe
+刷固件工具/驱动/*.exe
+刷固件工具/驱动/*.EXE
+
+# Generated release packages
+交付包_*/
+交付包_*.zip
+release/
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
+desktop.ini
