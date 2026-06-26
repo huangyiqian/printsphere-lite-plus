@@ -42,6 +42,8 @@ build-release.bat  生成 Release 交付包
 
 ## 使用方式
 
+如果从 GitHub 下载，请进入 [Releases](https://github.com/ccord34/printsphere-lite/releases) 页面，下载名称包含“完整交付包”的 `.zip` 文件。不要下载 GitHub 自动生成的 `Source code` 压缩包，源码包不包含 Windows 后端运行环境、烧录工具和驱动。
+
 1. 将 ESP 通过 USB 连接到 Windows 电脑。
 2. 打开发布包里的 `后端配置工具\打开配置工具.bat`。
 3. 登录 Bambu 云服务账号。
