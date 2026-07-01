@@ -5,10 +5,57 @@ const path = require("path");
 const os = require("os");
 const { execFile } = require("child_process");
 
-const BACKEND_VERSION = "backend-v0.4.56-usb-first";
+const BACKEND_VERSION = "backend-v0.4.71-ui-clean";
 const CHANGELOG = [
   {
     version: BACKEND_VERSION,
+    changes: [
+      "整理后端配置页布局：基础配置、屏幕设置、高级 HTTP 兜底和操作按钮分组展示",
+      "只调整页面结构和样式，不改云登录、串口写入、WiFi 配置、打印机同步和固件逻辑"
+    ]
+  },
+  {
+    version: "backend-v0.4.61-mqtt-stability",
+    changes: [
+      "ESP 已连上局域网后自动关闭配置热点，释放 WiFi 栈资源，避免开始连接 Bambu 云 MQTT 时底层重启",
+      "ESP 状态接口返回归一化后的设备型号，N7-V2 等底层型号显示为 P2S 等用户型号",
+      "保留 v0.4.60 的信息面板 UI 调整和型号映射"
+    ]
+  },
+  {
+    version: "backend-v0.4.60-dashboard-polish",
+    changes: [
+      "信息面板布局继续优化：去掉左侧进度环外侧方框，右侧温度区改为单行“喷嘴/热床/仓温 + 数据”",
+      "准备状态改为“准备中”，补齐 MQTT_FIELDS.md 中的底层型号映射，包括 N7-V2/P2S、O1C2-V2/H2C 等",
+      "配置页面设备别名示例改为普通客户场景文案"
+    ]
+  },
+  {
+    version: "backend-v0.4.59-dashboard-model-fix",
+    changes: [
+      "信息面板布局顶部重新显示设备型号：别名在上、型号小字在下",
+      "型号变化时会触发顶部区域重绘，不再依赖别名变化",
+      "不改经典布局、云 MQTT、WiFi/Token/打印机配置流程"
+    ]
+  },
+  {
+    version: "backend-v0.4.58-dashboard-cn-ring",
+    changes: [
+      "信息面板布局优化：左侧改为小圆环进度，中心显示百分比，去掉大图标",
+      "底部只保留剩余时间和预估完成时间，两格大显示更清楚",
+      "ESP 固件内置轻量中文点阵标签，状态、喷嘴、热床、仓温、剩余和完成时间标题改为中文"
+    ]
+  },
+  {
+    version: "backend-v0.4.57-dashboard-layout",
+    changes: [
+      "新增屏幕布局切换：经典布局 / 信息面板布局",
+      "配置页面新增设备别名和设备型号；别名由后端渲染为 1-bit 点阵后写入 ESP 显示",
+      "写入 ESP 时同步布局、别名、型号、亮度和云 MQTT 配置"
+    ]
+  },
+  {
+    version: "backend-v0.4.56-usb-first",
     changes: [
       "所有 ESP 配置写入统一为 USB 串口优先、HTTP 兜底：WiFi、云 token、打印机选择、亮度和本地打印机列表均遵循同一规则",
       "执行配置写入前先通过当前串口重新确认 ESP 身份，避免历史设备档案或旧 IP 接收配置",
@@ -285,7 +332,7 @@ const DEFAULT_CONFIG = {
   wifi: { ssid: "", password: "" },
   cloud: { region: "cn", account: "", access_token: "", mqtt_username: "", token_expires_at: 0 },
   printer: { serial: "", access_code: "", display_name: "", model: "" },
-  display: { brightness: 100, active_brightness: 100, dimmed: false },
+  display: { brightness: 100, layout: "classic", alias: "", alias_bitmap_hex: "", alias_bitmap_w: 0, alias_bitmap_h: 0 },
   esp: { host: "", port: 8081, serial_port: "COM7", wifi_status: "unknown", last_ip: "", last_checked_at: 0, last_error: "" },
   defaults: { wifi: { ssid: "", password: "" } },
   active_esp_id: "default",
@@ -311,10 +358,72 @@ function mergeConfig(base, extra) {
 
 function normalizeBrightness(value) {
   const level = Number(value);
-  if (level <= 25) return 25;
-  if (level <= 50) return 50;
-  if (level <= 75) return 75;
-  return 100;
+  if (!Number.isFinite(level)) return 100;
+  if (level < 0) return 0;
+  if (level > 100) return 100;
+  return Math.round(level);
+}
+
+function normalizeLayout(value) {
+  return String(value || "").toLowerCase() === "dashboard" ? "dashboard" : "classic";
+}
+
+function normalizeAlias(value) {
+  return String(value || "").trim().slice(0, 16);
+}
+
+async function renderAliasBitmap(alias) {
+  const text = normalizeAlias(alias);
+  if (!text) return { alias: "", alias_bitmap_hex: "", alias_bitmap_w: 0, alias_bitmap_h: 0 };
+  const textB64 = Buffer.from(text, "utf8").toString("base64");
+  const script = `
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Drawing
+$text=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${textB64}'))
+$font=New-Object System.Drawing.Font('Microsoft YaHei UI', 16, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+$tmp=New-Object System.Drawing.Bitmap(1,1)
+$g=[System.Drawing.Graphics]::FromImage($tmp)
+$g.TextRenderingHint=[System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
+$size=$g.MeasureString($text,$font)
+$w=[Math]::Min(108,[Math]::Max(8,[int][Math]::Ceiling($size.Width)+2))
+$h=22
+$g.Dispose(); $tmp.Dispose()
+$bmp=New-Object System.Drawing.Bitmap($w,$h)
+$g=[System.Drawing.Graphics]::FromImage($bmp)
+$g.Clear([System.Drawing.Color]::Black)
+$g.TextRenderingHint=[System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
+$g.DrawString($text,$font,[System.Drawing.Brushes]::White,0,0)
+$bytesPerRow=[int][Math]::Ceiling($w/8)
+$bytes=New-Object byte[] ($bytesPerRow*$h)
+for($y=0;$y -lt $h;$y++){
+  for($x=0;$x -lt $w;$x++){
+    $c=$bmp.GetPixel($x,$y)
+    if(($c.R+$c.G+$c.B) -gt 120){
+      $idx=$y*$bytesPerRow+[int][Math]::Floor($x/8)
+      $bytes[$idx]=$bytes[$idx] -bor (0x80 -shr ($x%8))
+    }
+  }
+}
+$hex=($bytes|ForEach-Object{$_.ToString('x2')}) -join ''
+$g.Dispose(); $bmp.Dispose(); $font.Dispose()
+@{alias=$text;alias_bitmap_hex=$hex;alias_bitmap_w=$w;alias_bitmap_h=$h}|ConvertTo-Json -Compress
+`;
+  return await new Promise((resolve) => {
+    execFile("powershell.exe", ["-NoProfile", "-Command", script], { windowsHide: true, timeout: 5000 }, (error, stdout) => {
+      if (error) return resolve({ alias: text, alias_bitmap_hex: "", alias_bitmap_w: 0, alias_bitmap_h: 0, alias_bitmap_error: error.message });
+      try {
+        const json = JSON.parse(String(stdout || "").trim());
+        resolve({
+          alias: text,
+          alias_bitmap_hex: String(json.alias_bitmap_hex || ""),
+          alias_bitmap_w: Number(json.alias_bitmap_w || 0),
+          alias_bitmap_h: Number(json.alias_bitmap_h || 0)
+        });
+      } catch (parseError) {
+        resolve({ alias: text, alias_bitmap_hex: "", alias_bitmap_w: 0, alias_bitmap_h: 0, alias_bitmap_error: parseError.message });
+      }
+    });
+  });
 }
 
 function readJson(file, fallback) {
@@ -432,8 +541,8 @@ function ensureEspProfiles(cfg) {
     profile.esp.last_ip = normalizeEspHost(profile.esp.last_ip);
     profile.display = mergeConfig(DEFAULT_CONFIG.display, profile.display);
     profile.display.brightness = normalizeBrightness(profile.display.brightness);
-    profile.display.active_brightness = normalizeBrightness(profile.display.active_brightness);
-    profile.display.dimmed = Boolean(profile.display.dimmed);
+    profile.display.layout = normalizeLayout(profile.display.layout);
+    profile.display.alias = normalizeAlias(profile.display.alias);
     if (!profile.wifi.ssid && !profile.wifi.password && (cfg.defaults.wifi.ssid || cfg.defaults.wifi.password)) {
       profile.wifi = mergeConfig(DEFAULT_CONFIG.wifi, cfg.defaults.wifi);
     }
@@ -460,6 +569,8 @@ function persistActiveProfile(cfg) {
   current.printer = mergeConfig(DEFAULT_CONFIG.printer, cfg.printer);
   current.display = mergeConfig(DEFAULT_CONFIG.display, cfg.display);
   current.display.brightness = normalizeBrightness(current.display.brightness);
+  current.display.layout = normalizeLayout(current.display.layout);
+  current.display.alias = normalizeAlias(current.display.alias);
   current.esp = mergeConfig(DEFAULT_CONFIG.esp, cfg.esp);
   current.esp.serial_port = normalizeSerialPort(current.esp.serial_port);
   current.esp.port = Number(current.esp.port || 8081);
@@ -766,12 +877,14 @@ function normalizeModelName(model) {
   if (normalized === "A1" || normalized.includes("BAMBULABA1") || normalized === "N2S") return "A1";
   if (normalized.includes("P1P") || normalized === "C11") return "P1P";
   if (normalized.includes("P1S") || normalized === "C12") return "P1S";
-  if (normalized.includes("P2S")) return "P2S";
+  if (normalized.includes("P2S") || normalized === "N7V2") return "P2S";
   if (normalized.includes("X2D") || normalized === "N6V2") return "X2D";
+  if (normalized === "BLP001") return "X1C";
+  if (normalized === "C13") return "X1E";
   if (normalized.includes("H2DPRO")) return "H2D Pro";
-  if (normalized.includes("H2D")) return "H2D";
-  if (normalized.includes("H2S")) return "H2S";
-  if (normalized.includes("H2C")) return "H2C";
+  if (normalized.includes("H2C") || normalized === "O1C2V2") return "H2C";
+  if (normalized.includes("H2D") || normalized === "O1D") return "H2D";
+  if (normalized.includes("H2S") || normalized === "O1S") return "H2S";
   if (normalized.includes("X1E") || normalized === "AP02") return "X1E";
   if (normalized.includes("X1CARBON") || normalized.includes("X1C") || normalized === "AP05") return "X1C";
   if (normalized.includes("X1")) return "X1";
@@ -930,7 +1043,7 @@ async function syncSavedPrinterListToEsp(input = {}) {
   return {
     ...result,
     message: result.ok
-      ? `已同步 ${result.count} 台打印机到 ESP 本地网页。`
+      ? `已同步 ${result.count} 台打印机到 ESP。`
       : `同步失败：${result.reason || result.error || "请确认 ESP 地址和端口是否正确"}`
   };
 }
@@ -1036,8 +1149,6 @@ function activateEspProfileFromStatus(status, serialPort, host) {
   if (status && status.serial) current.printer.serial = String(status.serial);
   if (status && status.name) current.printer.display_name = String(status.name);
   if (status && Object.prototype.hasOwnProperty.call(status, "brightness")) current.display.brightness = normalizeBrightness(status.brightness);
-  if (status && Object.prototype.hasOwnProperty.call(status, "brightness_active")) current.display.active_brightness = normalizeBrightness(status.brightness_active);
-  if (status && Object.prototype.hasOwnProperty.call(status, "brightness_dimmed")) current.display.dimmed = Boolean(status.brightness_dimmed);
   raw.esp_devices[id] = current;
   raw.active_esp_id = id;
   raw.wifi = mergeConfig(DEFAULT_CONFIG.wifi, current.wifi);
@@ -1366,7 +1477,7 @@ async function listWifiNetworks(port) {
     ...pcResult,
     ok: false,
     source: "esp",
-    message: `${espResult.message}；${serialResult.message}。请确认 ESP 已连接 USB 并选择正确串口，或连接 ESP 热点 PrintSphereLite-xxxx 后重新扫描；也可以直接手动输入 WiFi 名称。`
+    message: `${espResult.message}；${serialResult.message}。请确认 ESP 已连接 USB 并选择正确串口；也可以直接手动输入 WiFi 名称。`
   };
 }
 
@@ -1524,7 +1635,13 @@ async function pushConfigToEsp(config, options = {}) {
     token: cfg.cloud.access_token,
     serial: cfg.printer.serial,
     name: cfg.printer.display_name || cfg.printer.serial,
-    brightness: normalizeBrightness(cfg.display.brightness)
+    model: cfg.printer.model || "",
+    brightness: normalizeBrightness(cfg.display.brightness),
+    layout: normalizeLayout(cfg.display.layout),
+    alias: normalizeAlias(cfg.display.alias),
+    alias_bitmap_hex: cfg.display.alias_bitmap_hex || "",
+    alias_bitmap_w: Number(cfg.display.alias_bitmap_w || 0),
+    alias_bitmap_h: Number(cfg.display.alias_bitmap_h || 0)
   };
   const serialResult = await pushConfigToSerial(cfg.esp.serial_port, payload);
   if (serialResult.status) {
@@ -1569,7 +1686,14 @@ async function pushBrightnessToEsp(options = {}) {
   if (!options.skipSingleCheck) await ensureSingleConnectedEsp();
   const cfg = readConfig();
   ensureActiveEspSelected(cfg);
-  const payload = { brightness: normalizeBrightness(cfg.display.brightness) };
+  const payload = {
+    brightness: normalizeBrightness(cfg.display.brightness),
+    layout: normalizeLayout(cfg.display.layout),
+    alias: normalizeAlias(cfg.display.alias),
+    alias_bitmap_hex: cfg.display.alias_bitmap_hex || "",
+    alias_bitmap_w: Number(cfg.display.alias_bitmap_w || 0),
+    alias_bitmap_h: Number(cfg.display.alias_bitmap_h || 0)
+  };
   const serialResult = await pushConfigToSerial(cfg.esp.serial_port, payload);
   if (serialResult.status) return { ok: true, transport: "serial", ...serialResult };
   if (cfg.esp.host) {
@@ -1602,18 +1726,19 @@ function html() {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PrintSphere Lite 配置工具</title><style>
 body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7f8;color:#1f2933}
-main{max-width:1080px;margin:0 auto;padding:24px}h1{font-size:24px;margin:0 0 18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-section{background:white;border:1px solid #dde2e7;border-radius:8px;padding:16px}label{display:block;font-size:13px;color:#52606d;margin:10px 0 4px}
+main{max-width:1080px;margin:0 auto;padding:24px}h1{font-size:24px;margin:0 0 18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+section{background:white;border:1px solid #dde2e7;border-radius:8px;padding:18px}section h2{margin:0 0 16px;font-size:22px}.block{border-top:1px solid #edf0f2;padding-top:14px;margin-top:14px}.block:first-of-type{border-top:0;padding-top:0;margin-top:0}.block-title{font-size:14px;font-weight:700;color:#1f2933;margin:0 0 8px}
+label{display:block;font-size:13px;color:#52606d;margin:8px 0 4px}
 input,select{width:100%;box-sizing:border-box;border:1px solid #ccd3db;border-radius:6px;padding:9px 10px;font-size:14px;background:white}
-button{border:0;border-radius:6px;background:#1f7a4d;color:white;padding:9px 12px;font-size:14px;cursor:pointer;margin:8px 8px 0 0}
+button{border:0;border-radius:6px;background:#1f7a4d;color:white;padding:9px 12px;font-size:14px;cursor:pointer;margin:0}
 button.secondary{background:#52606d}button:disabled{background:#a7b0ba;cursor:not-allowed}.muted{color:#718096;font-size:13px}.warn{color:#b45309}.ok{color:#137333}.bad{color:#b42318}
-.fieldrow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.fieldrow button{margin:0;white-space:nowrap}
+.fieldrow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.fieldrow button{white-space:nowrap}.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}.full{grid-column:1/-1}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.actions.primary button{font-weight:700}.actions.secondary-actions button{background:#52606d}.statusbox{background:#f8fafc;border:1px solid #edf0f2;border-radius:8px;padding:10px;margin-top:12px}.statusbox p{margin:4px 0}.advanced{background:#f8fafc;border:1px solid #edf0f2;border-radius:8px;padding:10px;margin-top:12px}.advanced summary{cursor:pointer;font-size:14px;font-weight:700;color:#52606d}.advanced .formgrid{margin-top:8px}.hint{margin:8px 0 0}
 .profilebar{background:white;border:1px solid #dde2e7;border-radius:8px;padding:12px;margin:0 0 16px}.profilebar b{font-size:14px}.profilebar span{font-size:13px;color:#52606d}
 .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0 16px}.step{background:white;border:1px solid #dde2e7;border-radius:8px;padding:12px}.step b{display:block;font-size:14px}.step span{font-size:13px;color:#718096}.step.done{border-color:#84c89a;background:#f2fbf5}.step.active{border-color:#f2b84b;background:#fff8e7}
 table{width:100%;border-collapse:collapse;margin-top:10px}
 td,th{border-bottom:1px solid #edf0f2;text-align:left;padding:8px;font-size:13px}
 pre{white-space:pre-wrap;background:#101820;color:#d9e2ec;border-radius:8px;padding:12px;min-height:80px;max-height:260px;overflow:auto}
-@media(max-width:760px){.grid,.fieldrow{grid-template-columns:1fr}main{padding:14px}.fieldrow button{margin-top:8px}}
+@media(max-width:760px){.grid,.fieldrow,.formgrid{grid-template-columns:1fr}main{padding:14px}.fieldrow button{margin-top:0}}
 </style></head><body><main><h1>PrintSphere Lite 配置工具</h1><p class="muted">${urlLine}　版本：${BACKEND_VERSION}</p>
 <div class="steps">
 <div id="stepCloud" class="step"><b>1. Bambu 云服务登录</b><span>先获取账号 token</span></div>
@@ -1625,26 +1750,27 @@ pre{white-space:pre-wrap;background:#101820;color:#d9e2ec;border-radius:8px;padd
 <p id="autoDetectLine" class="muted">打开页面后会自动检测当前 ESP。配置时请只连接当前要配置的一台 ESP。</p>
 <p class="muted">多台 ESP 共用同一个 Bambu 云账号和默认 WiFi；每次只连接一台 ESP 配置，配置完拔掉再插下一台。</p></div>
 <div class="grid"><section><h2>1. Bambu 云服务登录</h2>
-<label>区域</label><select id="region"><option value="cn">中国区</option><option value="global">国际区</option></select>
-<label>手机号或邮箱</label><input id="account" placeholder="手机号或邮箱">
-<label>验证码</label><input id="code" placeholder="收到验证码后填写">
-<button onclick="sendCode()">发送验证码</button><button onclick="login()">登录并读取打印机</button>
-<p class="muted">电脑端用于登录、选择打印机和写入配置；ESP 保存 token 后会自己连接 Bambu 云 MQTT。</p></section>
-<section><h2>2. WiFi 和 ESP 写入方式</h2>
-<label>ESP 扫描到的附近 WiFi</label><div class="fieldrow"><select id="wifiList" onchange="chooseWifi()"><option value="">正在扫描附近 WiFi...</option></select><button class="secondary" onclick="scanWifi(true)">重新扫描 WiFi</button></div>
-<p id="wifiScanLine" class="muted">插着 USB 可通过串口扫描；也可以连接 ESP 热点或填写 ESP 地址后扫描。下方始终支持手动输入。</p>
-<label>手动输入 WiFi 名称</label><input id="wifiSsid" placeholder="2.4G WiFi SSID">
-<label>WiFi 密码</label><input id="wifiPassword" type="password" placeholder="留空则不修改已保存密码">
-<label>串口</label><input id="serialPort" placeholder="COM7">
-<label>检测到的串口</label><select id="serialList" onchange="chooseSerial()"><option value="">请先刷新串口</option></select>
-<button class="secondary" onclick="loadPorts(true)">重新检测 ESP</button><button class="secondary" onclick="readEspDevice()">高级：读取当前串口</button>
-<label>ESP 地址，可选</label><input id="espHost" placeholder="同 WiFi 填 192.168.x.x；连接 ESP 热点填 192.168.4.1">
-<p class="muted">ESP 已连上 WiFi 后优先填 ESP 地址；否则用 USB 串口写入配置。未完成这一步前不能选择打印机。</p>
-<label>ESP 端口，可选</label><input id="espPort" placeholder="8081">
-<label>屏幕亮度</label><select id="brightness"><option value="25">25%</option><option value="50">50%</option><option value="75">75%</option><option value="100">100%</option></select>
-<button id="brightnessBtn" onclick="applyBrightnessSetting()">应用屏幕亮度</button><button id="saveSettingsBtn" onclick="saveEsp(false)">只保存写入设置</button><button id="configureWifiBtn" onclick="saveEsp(true)">保存并配置 ESP WiFi</button><button id="detectWifiBtn" class="secondary" onclick="checkEsp(true)">检测 ESP WiFi</button><button id="pushConfigBtn" onclick="pushConfig()">同步云配置到 ESP</button>
-<p id="brightnessLine" class="muted"></p><p id="espLine" class="muted"></p><p id="wifiLine" class="muted"></p></section></div>
-<section style="margin-top:16px"><h2>3. 打印机列表</h2><button id="loadDevicesBtn" onclick="loadDevices()">刷新打印机列表</button><button id="syncPrinterListBtn" class="secondary" onclick="syncPrinterList()">同步打印机列表到 ESP 本地网页</button><p class="muted">如果 ESP 自己的局域网页面显示“暂无已同步打印机”，请先确认上方 ESP 地址正确，再点击同步。</p><div id="devices"></div></section>
+<div class="formgrid"><div><label>区域</label><select id="region"><option value="cn">中国区</option><option value="global">国际区</option></select></div><div><label>手机号或邮箱</label><input id="account" placeholder="手机号或邮箱"></div><div class="full"><label>验证码</label><input id="code" placeholder="收到验证码后填写"></div></div>
+<div class="actions primary"><button onclick="sendCode()">发送验证码</button><button onclick="login()">登录并读取打印机</button></div>
+<p class="muted hint">电脑端只用于登录、选择打印机和写入配置；ESP 保存 token 后会自己连接 Bambu 云 MQTT。</p></section>
+<section><h2>2. ESP 配置</h2>
+<div class="block"><p class="block-title">WiFi</p>
+<label>选择附近 WiFi</label><div class="fieldrow"><select id="wifiList" onchange="chooseWifi()"><option value="">正在扫描附近 WiFi...</option></select><button class="secondary" onclick="scanWifi(true)">重新扫描</button></div>
+<p id="wifiScanLine" class="muted hint">插着 USB 可通过 ESP 串口扫描附近 WiFi；扫描失败时也可以手动输入。</p>
+<div class="formgrid"><div><label>WiFi 名称</label><input id="wifiSsid" placeholder="2.4G WiFi SSID"></div><div><label>WiFi 密码</label><input id="wifiPassword" type="password" placeholder="留空则不修改已保存密码"></div></div></div>
+<div class="block"><p class="block-title">设备</p>
+<div class="formgrid"><div><label>串口</label><input id="serialPort" placeholder="COM7"></div><div><label>检测到的串口</label><select id="serialList" onchange="chooseSerial()"><option value="">请先刷新串口</option></select></div></div>
+<div class="actions secondary-actions"><button class="secondary" onclick="loadPorts(true)">重新检测 ESP</button><button class="secondary" onclick="readEspDevice()">读取当前串口</button></div></div>
+<div class="block"><p class="block-title">屏幕</p>
+<div class="formgrid"><div><label>屏幕布局</label><select id="layout"><option value="classic">经典布局</option><option value="dashboard">信息面板布局</option></select></div><div><label>屏幕亮度</label><div class="fieldrow"><input id="brightness" type="range" min="0" max="100" step="1" oninput="syncBrightnessValue(this.value)"><input id="brightnessValue" type="number" min="0" max="100" step="1" oninput="syncBrightnessValue(this.value)"></div></div></div>
+<input id="alias" type="hidden" value=""></div>
+<details class="advanced"><summary>高级 HTTP 兜底设置</summary>
+<div class="formgrid"><div><label>ESP 局域网地址</label><input id="espHost" placeholder="192.168.x.x，可留空"></div><div><label>ESP 端口</label><input id="espPort" placeholder="8081"></div></div>
+<p class="muted hint">所有配置默认走 USB 串口，局域网 HTTP 只作为兜底。未完成 WiFi 配置前不能选择打印机。</p></details>
+<div class="actions primary"><button id="configureWifiBtn" onclick="saveEsp(true)">保存并配置 ESP WiFi</button><button id="pushConfigBtn" onclick="pushConfig()">同步云配置到 ESP</button></div>
+<div class="actions secondary-actions"><button id="brightnessBtn" onclick="applyBrightnessSetting()">应用屏幕亮度</button><button id="detectWifiBtn" class="secondary" onclick="checkEsp(true)">检测 ESP WiFi</button><button id="saveSettingsBtn" onclick="saveEsp(false)">只保存写入设置</button></div>
+<div class="statusbox"><p id="wifiLine" class="muted"></p><p id="brightnessLine" class="muted"></p><p id="espLine" class="muted"></p></div></section></div>
+<section style="margin-top:16px"><h2>3. 打印机列表</h2><button id="loadDevicesBtn" onclick="loadDevices()">刷新打印机列表</button><p class="muted">选择一台打印机后，后端会把云 MQTT 配置写入当前 USB 连接的 ESP。</p><div id="devices"></div></section>
 <section style="margin-top:16px"><h2>当前配置</h2><div id="statusLine"></div><pre id="log"></pre></section>
 </main><script>
 const $=id=>document.getElementById(id);
@@ -1656,15 +1782,16 @@ async function api(path,opt={}){const r=await fetch(path,{headers:{"content-type
 function setBusy(ids,busy){operationBusy=busy;ids.forEach(id=>{const el=$(id);if(el)el.disabled=busy;});}
 function setActionState(c){const espReady=!!(c&&c.steps&&c.steps.esp_ready)&&!multiEspBlocked;const canPush=!!(c&&c.steps&&c.steps.ready_to_select_printer&&c.steps.printer_selected)&&!multiEspBlocked;if($("configureWifiBtn"))$("configureWifiBtn").disabled=!espReady;if($("brightnessBtn"))$("brightnessBtn").disabled=!espReady;if($("saveSettingsBtn"))$("saveSettingsBtn").disabled=multiEspBlocked;if($("pushConfigBtn"))$("pushConfigBtn").disabled=!canPush;}
 function setIdleValue(id,value){const el=$(id);if(!el)return;if(document.activeElement===el)return;if((value===undefined||value===null||value==="")&&el.value)return;el.value=value||"";}
+function syncBrightnessValue(value){let n=Math.round(Number(value));if(!Number.isFinite(n))n=100;if(n<0)n=0;if(n>100)n=100;if($("brightness"))$("brightness").value=String(n);if($("brightnessValue"))$("brightnessValue").value=String(n);}
 function setStep(id,done,active){const el=$(id);if(!el)return;el.className="step"+(done?" done":"")+(active?" active":"");}
 function wifiStatusText(c){if(c.esp.wifi_status==="configured")return "WiFi 已配置"+(c.esp.last_ip?"，ESP IP："+c.esp.last_ip:"");if(c.esp.wifi_status==="ap_only")return "ESP 已响应，但还没有连上 WiFi";if(c.esp.last_error)return "WiFi 状态未确认："+c.esp.last_error;return "WiFi 状态未检测";}
 function updateSteps(c){setStep("stepCloud",c.steps.cloud_ready,!c.steps.cloud_ready);setStep("stepWifi",c.steps.esp_wifi_configured,c.steps.cloud_ready&&!c.steps.esp_wifi_configured);setStep("stepPrinter",c.steps.printer_selected,c.steps.cloud_ready&&c.steps.esp_ready&&c.steps.wifi_saved&&!c.steps.printer_selected);const btn=$("loadDevicesBtn");if(btn)btn.disabled=!c.steps.cloud_ready;}
 function renderEspProfiles(c){const list=$("espProfileList");if(!list)return;const profiles=c.esp_profiles||[];list.innerHTML=(profiles.length?profiles:[{id:"",label:"暂无设备档案"}]).map(p=>"<option value='"+esc(p.id)+"'"+(p.id===c.active_esp_id?" selected":"")+">"+esc(p.label||p.id)+"</option>").join("");$("activeEspLine").textContent="："+(c.active_esp_label||c.active_esp_id||"未读取")+"（当前串口 "+(c.esp.serial_port||"--")+"）";}
-async function refresh(){const c=await api("/api/config");if(document.activeElement!==$("region"))$("region").value=c.cloud.region;setIdleValue("account",c.cloud.account);if(![$("wifiSsid"),$("wifiPassword"),$("wifiList")].includes(document.activeElement))setIdleValue("wifiSsid",c.wifi.ssid);$("wifiPassword").placeholder=c.wifi.password_saved?"已保存，留空则不修改":"WiFi 密码";setIdleValue("espHost",c.esp.host||c.esp.last_ip);if(document.activeElement!==$("espPort"))$("espPort").value=c.esp.port||8081;if(document.activeElement!==$("brightness"))$("brightness").value=String(c.display&&c.display.brightness||100);if(![$("serialPort"),$("serialList")].includes(document.activeElement))$("serialPort").value=c.esp.serial_port||"COM7";renderEspProfiles(c);updateSteps(c);setActionState(c);$("statusLine").innerHTML="当前 ESP："+(c.active_esp_label||c.active_esp_id||"--")+"　打印机："+(c.printer.display_name||c.printer.serial||"未选择")+"　云账号："+(c.cloud.logged_in?"已登录":"未登录")+"　MQTT 用户名："+(c.cloud.mqtt_username||"--");$("brightnessLine").textContent="用户亮度："+(c.display&&c.display.brightness||100)+"%　当前亮度："+(c.display&&c.display.active_brightness||c.display&&c.display.brightness||100)+"%"+(c.display&&c.display.dimmed?"（自动节能）":"");$("espLine").textContent="当前写入方式："+(c.esp.host||c.esp.last_ip?"优先 ESP HTTP，失败后串口兜底":"USB 串口写入")+"（"+($("serialPort").value||"--")+"）";$("wifiLine").className=c.esp.wifi_status==="configured"?"ok":(c.esp.wifi_status==="ap_only"?"warn":"muted");$("wifiLine").textContent=wifiStatusText(c);log(c)}
+async function refresh(){const c=await api("/api/config");if(document.activeElement!==$("region"))$("region").value=c.cloud.region;setIdleValue("account",c.cloud.account);if(![$("wifiSsid"),$("wifiPassword"),$("wifiList")].includes(document.activeElement))setIdleValue("wifiSsid",c.wifi.ssid);$("wifiPassword").placeholder=c.wifi.password_saved?"已保存，留空则不修改":"WiFi 密码";setIdleValue("espHost",c.esp.host||c.esp.last_ip);if(document.activeElement!==$("espPort"))$("espPort").value=c.esp.port||8081;if(![$("brightness"),$("brightnessValue")].includes(document.activeElement))syncBrightnessValue(c.display&&c.display.brightness!==undefined?c.display.brightness:100);if(document.activeElement!==$("layout"))$("layout").value=(c.display&&c.display.layout)||"classic";setIdleValue("alias","");if(![$("serialPort"),$("serialList")].includes(document.activeElement))$("serialPort").value=c.esp.serial_port||"COM7";renderEspProfiles(c);updateSteps(c);setActionState(c);$("statusLine").innerHTML="当前 ESP："+(c.active_esp_label||c.active_esp_id||"--")+"　打印机："+(c.printer.display_name||c.printer.serial||"未选择")+"　云账号："+(c.cloud.logged_in?"已登录":"未登录")+"　MQTT 用户名："+(c.cloud.mqtt_username||"--");$("brightnessLine").textContent="布局："+(((c.display&&c.display.layout)==="dashboard")?"信息面板":"经典")+"　亮度："+(c.display&&c.display.brightness!==undefined?c.display.brightness:100)+"%";$("espLine").textContent="当前写入方式：USB 串口优先，HTTP 兜底（"+($("serialPort").value||"--")+"）";$("wifiLine").className=c.esp.wifi_status==="configured"?"ok":(c.esp.wifi_status==="ap_only"?"warn":"muted");$("wifiLine").textContent=wifiStatusText(c);log(c)}
 async function sendCode(){try{log(await api("/api/cloud/send-code",{method:"POST",body:JSON.stringify({region:$("region").value,account:$("account").value})}))}catch(e){log(e)}}
 async function login(){try{log(await api("/api/cloud/login",{method:"POST",body:JSON.stringify({region:$("region").value,account:$("account").value,code:$("code").value})}));await loadDevices()}catch(e){log(e)}}
-async function saveEsp(configureWifi){const busy=["saveSettingsBtn","configureWifiBtn","detectWifiBtn","pushConfigBtn","brightnessBtn"];const line=$("wifiLine");try{setBusy(busy,true);if(line){line.className="muted";line.textContent=configureWifi?"正在写入 ESP WiFi，随后会检测 ESP 是否连上 WiFi...":"正在保存写入设置...";}const body={wifi_ssid:$("wifiSsid").value,wifi_password:$("wifiPassword").value,brightness:Number($("brightness").value||100),host:$("espHost").value,port:Number($("espPort").value||8081),serial_port:$("serialPort").value||"COM7",configure_wifi:Boolean(configureWifi)};log(configureWifi?"正在写入 ESP WiFi，并检测连接状态...":"正在保存写入设置...");const d=await api("/api/esp",{method:"POST",body:JSON.stringify(body)});log(d);$("wifiPassword").value="";await refresh();if(configureWifi&&line){line.className=d.ok&&(d.detection&&d.detection.ok)?"ok":(d.ok?"warn":"bad");line.textContent=d.message||"ESP WiFi 配置流程已完成，请查看下方日志。";}}catch(e){if(line){line.className="bad";line.textContent=(e&&e.error)||"保存或配置 ESP WiFi 失败。";}log(e)}finally{setBusy(busy,false);try{setActionState(await api("/api/config"))}catch{}}}
-async function applyBrightnessSetting(){const busy=["brightnessBtn","configureWifiBtn","pushConfigBtn"];const line=$("brightnessLine");try{setBusy(busy,true);if(line){line.className="muted";line.textContent="正在写入屏幕亮度...";}const body={brightness:Number($("brightness").value||100),apply_brightness:true,host:$("espHost").value,port:Number($("espPort").value||8081),serial_port:$("serialPort").value||"COM7"};const d=await api("/api/esp",{method:"POST",body:JSON.stringify(body)});log(d);await refresh();if(line){line.className=d.ok?"ok":"bad";line.textContent=d.ok?"屏幕亮度已写入当前 ESP。":"屏幕亮度写入失败。";}}catch(e){if(line){line.className="bad";line.textContent=(e&&e.error)||"屏幕亮度写入失败。";}log(e)}finally{setBusy(busy,false);try{setActionState(await api("/api/config"))}catch{}}}
+async function saveEsp(configureWifi){const busy=["saveSettingsBtn","configureWifiBtn","detectWifiBtn","pushConfigBtn","brightnessBtn"];const line=$("wifiLine");try{setBusy(busy,true);if(line){line.className="muted";line.textContent=configureWifi?"正在写入 ESP WiFi，随后会检测 ESP 是否连上 WiFi...":"正在保存写入设置...";}const body={wifi_ssid:$("wifiSsid").value,wifi_password:$("wifiPassword").value,brightness:Number($("brightness").value||100),layout:$("layout").value,alias:$("alias").value,host:$("espHost").value,port:Number($("espPort").value||8081),serial_port:$("serialPort").value||"COM7",configure_wifi:Boolean(configureWifi)};log(configureWifi?"正在写入 ESP WiFi，并检测连接状态...":"正在保存写入设置...");const d=await api("/api/esp",{method:"POST",body:JSON.stringify(body)});log(d);$("wifiPassword").value="";await refresh();if(configureWifi&&line){line.className=d.ok&&(d.detection&&d.detection.ok)?"ok":(d.ok?"warn":"bad");line.textContent=d.message||"ESP WiFi 配置流程已完成，请查看下方日志。";}}catch(e){if(line){line.className="bad";line.textContent=(e&&e.error)||"保存或配置 ESP WiFi 失败。";}log(e)}finally{setBusy(busy,false);try{setActionState(await api("/api/config"))}catch{}}}
+async function applyBrightnessSetting(){const busy=["brightnessBtn","configureWifiBtn","pushConfigBtn"];const line=$("brightnessLine");try{setBusy(busy,true);if(line){line.className="muted";line.textContent="正在写入屏幕显示设置...";}const body={brightness:Number($("brightness").value||100),layout:$("layout").value,alias:$("alias").value,apply_brightness:true,host:$("espHost").value,port:Number($("espPort").value||8081),serial_port:$("serialPort").value||"COM7"};const d=await api("/api/esp",{method:"POST",body:JSON.stringify(body)});log(d);await refresh();if(line){line.className=d.ok?"ok":"bad";line.textContent=d.ok?"屏幕显示设置已写入当前 ESP。":"屏幕显示设置写入失败。";}}catch(e){if(line){line.className="bad";line.textContent=(e&&e.error)||"屏幕显示设置写入失败。";}log(e)}finally{setBusy(busy,false);try{setActionState(await api("/api/config"))}catch{}}}
 async function pushConfig(){try{log(await api("/api/esp/push-config",{method:"POST"}));await refresh()}catch(e){log(e)}}
 async function checkEsp(discover){const busy=["detectWifiBtn","configureWifiBtn"];const line=$("wifiLine");try{setBusy(busy,true);if(line){line.className="muted";line.textContent=discover?"正在检测 ESP WiFi：先试已知地址和 USB 串口，必要时搜索局域网...":"正在检测 ESP WiFi...";}log("正在检测 ESP WiFi...");const d=await api("/api/esp/status?discover="+(discover?"1":"0"));log(d);await refresh();if(line){line.className=d.ok?"ok":"warn";line.textContent=d.message||d.error||(d.ok?"ESP WiFi 已配置。":"ESP WiFi 状态未确认。");}}catch(e){if(line){line.className="bad";line.textContent=(e&&e.error)||"检测 ESP WiFi 失败。";}log(e)}finally{setBusy(busy,false);try{setActionState(await api("/api/config"))}catch{}}}
 function renderSerialPorts(items){const list=$("serialList");if(!list)return;const cur=String($("serialPort").value||"").toUpperCase();const arr=(items||[]).map(x=>typeof x==="string"?{port:x,name:""}:x).filter(x=>x&&x.port);list.innerHTML=(arr.length?arr:[{port:"",name:"未检测到串口"}]).map(p=>"<option value='"+esc(p.port)+"'"+(p.port===cur?" selected":"")+">"+esc(p.port+(p.name?("　"+p.name):""))+"</option>").join("");}
@@ -1675,9 +1802,9 @@ function renderAutoDetect(d){const line=$("autoDetectLine");if(!line)return;cons
 async function autoDetectEsp(showLog){if(autoDetectBusy||(!showLog&&operationBusy))return;autoDetectBusy=true;const line=$("autoDetectLine");try{if(line){line.className="muted";line.textContent="正在检测当前 ESP...";}const d=await api("/api/esp/auto-detect",{method:"POST"});renderAutoDetect(d);if(showLog)log(d);await refresh();api("/api/devices").then(x=>renderDevices(x.devices||[]));}catch(e){if(line){line.className="bad";line.textContent=(e&&e.error)||"自动检测 ESP 失败。";}if(showLog)log(e)}finally{autoDetectBusy=false}}
 function renderWifiNetworks(networks){const list=$("wifiList");if(!list)return;const current=String($("wifiSsid").value||"");const opts=['<option value="">请选择扫描到的 WiFi，或在下方手动输入</option>'];(networks||[]).forEach(n=>{const ssid=String(n.ssid||"");const label=ssid+(n.signal?("（"+n.signal+"%）"):"");opts.push("<option value='"+esc(ssid)+"'"+(ssid===current?" selected":"")+">"+esc(label)+"</option>")});list.innerHTML=opts.join("");}
 function chooseWifi(){const v=$("wifiList").value;if(v){$("wifiSsid").value=v;$("wifiPassword").focus();}}
-async function scanWifi(showLog){const line=$("wifiScanLine");if(line){line.className="muted";line.textContent="正在通过 ESP 扫描附近 WiFi...";}try{const d=await api("/api/wifi/networks?serial_port="+encodeURIComponent($("serialPort").value||"COM7"));renderWifiNetworks(d.networks||[]);if(line){const ok=(d.networks||[]).length>0;line.className=ok?"ok":"warn";line.textContent=d.message||(ok?("已扫描到 "+d.networks.length+" 个 WiFi，可选择或手动输入。"):"未扫描到 WiFi，可手动输入。");}if(showLog)log(d)}catch(e){renderWifiNetworks([]);if(line){line.className="warn";line.textContent=(e&&e.error)||"扫描失败，可手动输入 WiFi 名称。";}if(showLog)log(e)}}
+async function scanWifi(showLog){const line=$("wifiScanLine");if(line){line.className="muted";line.textContent="正在通过 USB 串口让 ESP 扫描附近 WiFi...";}try{const d=await api("/api/wifi/networks?serial_port="+encodeURIComponent($("serialPort").value||"COM7"));renderWifiNetworks(d.networks||[]);if(line){const ok=(d.networks||[]).length>0;line.className=ok?"ok":"warn";line.textContent=d.message||(ok?("已扫描到 "+d.networks.length+" 个 WiFi，可选择或手动输入。"):"未扫描到 WiFi，可手动输入。");}if(showLog)log(d)}catch(e){renderWifiNetworks([]);if(line){line.className="warn";line.textContent=(e&&e.error)||"扫描失败，可手动输入 WiFi 名称。";}if(showLog)log(e)}}
 async function loadPorts(detect){try{const d=await api("/api/serial/ports");const ports=d.ports||[];const items=d.items||ports;renderSerialPorts(items);if(ports.length){const cur=String($("serialPort").value||"").toUpperCase();if((!cur||!ports.includes(cur))&&document.activeElement!==$("serialList"))$("serialPort").value=ports[0];renderSerialPorts(items);}if(detect)await autoDetectEsp(false);else log(d)}catch(e){log(e)}}
-async function loadDevices(){try{const d=await api("/api/cloud/bindings");renderDevices(d.devices||[]);if(d.esp_printer_sync)log({message:d.esp_printer_sync.ok?"打印机列表已同步到 ESP 本地网页":"打印机列表尚未同步到 ESP 本地网页",esp_printer_sync:d.esp_printer_sync});else log(d);await refresh()}catch(e){log(e)}}
+async function loadDevices(){try{const d=await api("/api/cloud/bindings");renderDevices(d.devices||[]);if(d.esp_printer_sync)log({message:d.esp_printer_sync.ok?"打印机列表已同步到 ESP":"打印机列表尚未同步到 ESP",esp_printer_sync:d.esp_printer_sync});else log(d);await refresh()}catch(e){log(e)}}
 async function syncPrinterList(){try{const body={host:$("espHost").value,port:Number($("espPort").value||8081)};const d=await api("/api/esp/sync-printers",{method:"POST",body:JSON.stringify(body)});log(d);await refresh()}catch(e){log(e)}}
 async function renderDevices(devs){const c=await api("/api/config");const disabled=!c.steps.ready_to_select_printer||multiEspBlocked;let warn="";if(disabled)warn='<p class="warn">'+(multiEspBlocked?'当前同时连接了多台 ESP，请只保留当前要配置的一台。':(!c.steps.esp_ready?'请先连接一台 ESP，并点击“检测当前 ESP”。':'请先完成第 1 步登录和第 2 步 WiFi 保存，再选择打印机。'))+'</p>';$("devices").innerHTML=warn+'<table><tr><th>名称</th><th>型号</th><th>序列号</th><th>状态</th><th></th></tr>'+devs.map(d=>'<tr><td>'+esc(d.display_name)+'</td><td>'+esc(d.model)+'</td><td>'+esc(d.serial)+'</td><td>'+esc(d.print_status||"")+'</td><td><button class="selectPrinterBtn" data-serial="'+esc(d.serial)+'" data-esp="'+esc(c.active_esp_id||'')+'" data-port="'+esc(c.esp.serial_port||'')+'" '+(disabled?'disabled':'')+'>显示这台并同步</button></td></tr>').join("")+'</table>';document.querySelectorAll(".selectPrinterBtn").forEach(b=>{b.onclick=()=>selectPrinter(b.dataset.serial,b.dataset.esp,b.dataset.port);});}
 function esc(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"&#39;"}[c]))}
@@ -1687,8 +1814,9 @@ async function initialize(){await refresh();await loadPorts(true);await scanWifi
 }
 
 async function readBody(req) {
-  let text = "";
-  for await (const chunk of req) text += chunk;
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const text = Buffer.concat(chunks).toString("utf8");
   return text ? JSON.parse(text) : {};
 }
 
@@ -1740,6 +1868,14 @@ const server = http.createServer(async (req, res) => {
       if (Object.prototype.hasOwnProperty.call(body, "wifi_ssid")) next.wifi.ssid = String(body.wifi_ssid || "").trim();
       if (body.wifi_password) next.wifi.password = String(body.wifi_password);
       if (Object.prototype.hasOwnProperty.call(body, "brightness")) next.display.brightness = normalizeBrightness(body.brightness);
+      if (Object.prototype.hasOwnProperty.call(body, "layout")) next.display.layout = normalizeLayout(body.layout);
+      if (Object.prototype.hasOwnProperty.call(body, "alias")) {
+        const bitmap = await renderAliasBitmap(body.alias);
+        next.display.alias = bitmap.alias;
+        next.display.alias_bitmap_hex = bitmap.alias_bitmap_hex;
+        next.display.alias_bitmap_w = bitmap.alias_bitmap_w;
+        next.display.alias_bitmap_h = bitmap.alias_bitmap_h;
+      }
       next.esp.host = next.esp.wifi_status === "configured" ? normalizeEspHost(body.host) : "";
       next.esp.port = Number(body.port || 8081);
       next.esp.serial_port = normalizeSerialPort(body.serial_port);

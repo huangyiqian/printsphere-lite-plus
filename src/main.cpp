@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // SD2 PrintSphere Lite - ESP8266 Bambu Cloud MQTT display
 // The companion backend only provisions cloud credentials and printer choice.
 // ============================================================
@@ -9,6 +9,7 @@
 #include <WiFiClientSecureBearSSL.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <time.h>
 #include "config.h"
 
 TFT_eSPI tft;
@@ -17,7 +18,7 @@ BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
 
-const char* FIRMWARE_VERSION = "firmware-v0.4.56-usb-first";
+const char* FIRMWARE_VERSION = "firmware-v0.4.70-dual-nozzle-fit";
 
 #define BG_BLACK  0x0000
 #define C_RING    0x07E0
@@ -28,6 +29,9 @@ const char* FIRMWARE_VERSION = "firmware-v0.4.56-usb-first";
 #define C_ORANGE  0xFD20
 #define C_BLUE    0x5D1F
 #define C_RED     0xF800
+#define C_PANEL   0x3B6D
+#define C_PANEL2  0x2A6B
+#define C_PANEL3  0x4C10
 
 #define FRAME_X      4
 #define FRAME_Y      4
@@ -54,17 +58,32 @@ const uint8_t BAMBU_LOGO[] PROGMEM = {
   0xEF, 0xFF, 0xFF, 0xEF, 0xFF, 0xFF, 0xE7, 0xFF
 };
 
+const char CN_READY[] PROGMEM = "000000000000000000000000000000640000003000087e01c00030001c6303ff8030000cffc78380300006c60fcf0fffc005c600fe0c30c001ffc0fc0c30c001c607df0c30c004c60e01cc30c006c607ff8fffc00effc6318c30c00cc607ff8030000cc606318030001cc6063180300008ffe7ff80300000c006018030000000000000000000000000000000000000000000000000000000000000000000000"; // 55x23
+const char CN_PRINT[] PROGMEM = "0000000000000000000000000000030001c0003000033fefbfc0300003038c18c030001fc38c18c0300003038c18cfffc003038c18cc30c003038fd8cc30c003038c18cc30c003c38c18cc30c01f038c18cfffc003038c18cc30c003038cd8c0300003038f9b80300003038c18003000030300180030000e1f00180030000000000000000000000000000000000000000000000000000000000000000000000"; // 55x23
+const char CN_PAUSE[] PROGMEM = "0000000000000000000000000000000c0630c0003ff83ffc001e60200000167f67f8001f6c661800064ce7f8003ffce000000c0c2ffc000ffc280c000c0c27f8000ffc20c0000c0c23c00000000000000000000000"; // 36x17
+const char CN_DONE[] PROGMEM = "00000000000000000000000000000000c000d00000c000f8001ffe7ffc00180660c00000007ed8000ffc66d800000066f0001ffe66f000033066e80006327cec000e33c1e800183e43380000000000000000000000"; // 36x17
+const char CN_ERR[] PROGMEM = "000000000000000000000000000000086c67f800186c7618001efe261800306c07f8003fffe00000080067f80008fe60c0003ec66ffc0008fe61e0000ac67320000cfe76100008c62c080000000000000000000000"; // 36x17
+const char CN_IDLE[] PROGMEM = "000000000000000000000000000000043033f0000c3033300019fefb3000103033300007ff7330000c007b30000c0c7f30001dfff33c002c8cb23c000ccc363c000c4c363c000c3c3c380000000000000000000000"; // 36x17
+const char CN_NOZ[] PROGMEM = "00000000000000000000000c001b40000c0f5f800f7fcb5b400f0c0b5b600f318bffc00fffeb38000f318b3f800f000b63000f7fcbffc00f60cb66c00f64cb7fc00f6ccb66c00f6ecb7fc00c0f0f66c00039c8c6c000e04047c000000000000000000000000000000000000000000000000"; // 39x23
+const char CN_BED[] PROGMEM = "00000000000000000000061800380006180038001fff07ffe0061b060000065b061c00067b061c0007fb061c001e3b47ffc0063f663c0006676e7e0006616cff000e41cddd8004cc8f9cc00ecdcd1c400cecdc1c00086cc81c0000000000000000000000000000000000000000000000000000"; // 39x23
+const char CN_CHAM[] PROGMEM = "0000000000000000000000300c0000007806ff8000fc02c18001ce00c180038708ff8007038cc1800fffccc180030706ff800307000000030604ffc0031e0e96c003008c96c00300cc96c00301cc96c001ff8fffe0000004000000000000000000000000000000000000000000000000000000"; // 39x23
+const char CN_PROGRESS[] PROGMEM = "0000000000000000000004330038000c330fffe006330c000007ffccc30000330dffc000330cc3001e330cc30006330cff0006ffec000006730dff8006630cc38006e30c770006230c3e000f001c7e0009ffd8e78008000b00c000000000000000000000000000000000000000000000000000"; // 39x23
+const char CN_TIME[] PROGMEM = "0000000000000000000000000000000000000000000000001fc2038000613f80031a0781f06181803ffa1ce1b7f78180031a3871b06601800bba7ff9b466fd803bda0301fe66cd800bba7ff9b666fd803bfa0301b366cd80079a1361b266fd801b623339b066c18013026309f0660180030e0f01b3c60f8000000000000000000000000000000000000000000000000000000000000000000000000000000000"; // 63x20
+const char CN_ETA[] PROGMEM = "000000000000000000000000000000000000000000003efe23006000d000c67e00063063007000d9f0c3020016fc7ff7ff3ffd3feb02001cc4e3060330c130c802003ff4e300003fc934c9f2000af5e303fe32d9fcc912000af5efe000325136c9f2000af46c67ffb27136c9120008f46c6098326933c9f20008786c6199beed30c9020008cc6fe319e1adf0c8060039846c661f211937881e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"; // 85x19
+
 struct PrinterState {
   float progress = -1;
   float nozzleTemp = -1;
   float leftNozzleTemp = -1;
   float rightNozzleTemp = -1;
   float bedTemp = -1;
+  float chamberTemp = -1;
   int remainingMin = -1;
   int currentLayer = -1;
   int totalLayers = -1;
   String status = "prepare";
   String displayName = "";
+  String model = "";
   String serial = "";
   bool online = true;
   bool dualNozzle = false;
@@ -79,6 +98,12 @@ struct StoredConfig {
   String token = "";
   String serial = "";
   String name = "";
+  String model = "";
+  String alias = "";
+  String layout = "classic";
+  String aliasBitmapHex = "";
+  uint8_t aliasBitmapW = 0;
+  uint8_t aliasBitmapH = 0;
   uint8_t brightness = 100;
 };
 
@@ -96,11 +121,15 @@ struct RenderCache {
   int nozzleTemp = -999;
   int nozzleSide = -2;
   int bedTemp = -999;
+  int chamberTemp = -999;
   int remainingMin = -999;
   int currentLayer = -999;
   int totalLayers = -999;
   String status = "";
   String displayName = "";
+  String model = "";
+  String alias = "";
+  String layout = "";
 };
 
 PrinterState pr;
@@ -127,25 +156,24 @@ String serialConfigLine;
 String pendingHttpConfigBody;
 bool pendingHttpConfig = false;
 bool printerStatusReceived = false;
-bool brightnessDimmed = false;
 uint8_t appliedBrightness = 0;
-unsigned long inactiveSince = 0;
 
 const unsigned long DUAL_NOZZLE_SWITCH_MS = 3000;
-const unsigned long AUTO_DIM_DELAY_MS = 5UL * 60UL * 1000UL;
 
 void startEspServer();
+String normalizedModelName(const String& value);
+bool chamberFallbackAllowedForModel(const String& value);
 
 bool wifiHasIp() {
   return WiFi.localIP() != IPAddress(0, 0, 0, 0);
 }
 
 bool httpNetworkReady() {
-  return wifiHasIp() || setupApStarted;
+  return wifiHasIp();
 }
 
 bool configClientConnected() {
-  return setupApStarted && WiFi.softAPgetStationNum() > 0;
+  return false;
 }
 
 float jsonFloat(JsonVariant v, float fallback) {
@@ -304,35 +332,33 @@ bool isFailedState(const String& s) {
 }
 
 uint8_t normalizeBrightness(int value) {
-  if (value <= 25) return 25;
-  if (value <= 50) return 50;
-  if (value <= 75) return 75;
-  return 100;
+  if (value < 0) return 0;
+  if (value > 100) return 100;
+  return (uint8_t)value;
 }
 
 void applyBrightness(uint8_t percent) {
   percent = normalizeBrightness(percent);
   if (appliedBrightness == percent) return;
-  int duty = 1023 - (int)percent * 10;
+  int duty = 1023 - ((int)percent * 1023 / 100);
   analogWrite(LCD_BL_PIN, duty);
   appliedBrightness = percent;
 }
 
-bool hasActiveTaskForBrightness() {
-  if (!printerStatusReceived || !mqttNet.connected()) return false;
-  return isPrintingState(pr.status) || isPreparingState(pr.status) || isPausedState(pr.status);
-}
-
-void updateBrightness(unsigned long now) {
-  if (hasActiveTaskForBrightness()) {
-    inactiveSince = 0;
-    brightnessDimmed = false;
-    applyBrightness(stored.brightness);
-    return;
-  }
-  if (inactiveSince == 0) inactiveSince = now ? now : 1;
-  brightnessDimmed = now - inactiveSince >= AUTO_DIM_DELAY_MS;
-  applyBrightness(brightnessDimmed ? 25 : stored.brightness);
+void resetLivePrintFields() {
+  pr.progress = -1;
+  pr.nozzleTemp = -1;
+  pr.leftNozzleTemp = -1;
+  pr.rightNozzleTemp = -1;
+  pr.dualNozzle = false;
+  pr.bedTemp = -1;
+  pr.chamberTemp = -1;
+  pr.remainingMin = -1;
+  pr.currentLayer = -1;
+  pr.totalLayers = -1;
+  pr.status = "prepare";
+  printerStatusReceived = false;
+  displayDirty = true;
 }
 
 void wifiConnect() {
@@ -348,25 +374,15 @@ void wifiConnect() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("WiFi connected, IP=");
     Serial.println(WiFi.localIP());
+    configTime(8 * 3600, 0, "ntp.aliyun.com", "cn.pool.ntp.org", "pool.ntp.org");
   } else {
     Serial.println("WiFi connect timeout");
   }
 }
 
 void startSetupAp() {
-  if (setupApStarted) return;
-  setupApSsid = String("PrintSphereLite-") + String(ESP.getChipId(), HEX);
-  setupApSsid.toUpperCase();
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleepMode(WIFI_NONE_SLEEP);
-  WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-  setupApStarted = WiFi.softAP(setupApSsid.c_str(), "printsphere", 1, false, 2);
-  if (setupApStarted) {
-    Serial.printf("Setup AP: %s / printsphere / http://%s:%d/\n",
-                  setupApSsid.c_str(), WiFi.softAPIP().toString().c_str(), ESP_CONFIG_PORT);
-  } else {
-    Serial.println("Setup AP start failed");
-  }
+  setupApStarted = false;
+  setupApSsid = "";
 }
 
 bool saveStoredConfig() {
@@ -382,6 +398,12 @@ bool saveStoredConfig() {
   doc["token"] = stored.token;
   doc["serial"] = stored.serial;
   doc["name"] = stored.name;
+  doc["model"] = stored.model;
+  doc["alias"] = stored.alias;
+  doc["layout"] = stored.layout;
+  doc["alias_bitmap_hex"] = stored.aliasBitmapHex;
+  doc["alias_bitmap_w"] = stored.aliasBitmapW;
+  doc["alias_bitmap_h"] = stored.aliasBitmapH;
   doc["brightness"] = stored.brightness;
   serializeJson(doc, file);
   file.close();
@@ -459,9 +481,16 @@ void loadStoredConfig() {
   stored.token = doc["token"] | "";
   stored.serial = doc["serial"] | "";
   stored.name = doc["name"] | "";
+  stored.model = doc["model"] | "";
+  stored.alias = doc["alias"] | "";
+  stored.layout = doc["layout"] | "classic";
+  stored.aliasBitmapHex = doc["alias_bitmap_hex"] | "";
+  stored.aliasBitmapW = doc["alias_bitmap_w"] | 0;
+  stored.aliasBitmapH = doc["alias_bitmap_h"] | 0;
   stored.brightness = normalizeBrightness(doc["brightness"] | 100);
   pr.serial = stored.serial;
   pr.displayName = stored.name;
+  pr.model = stored.model;
 }
 
 String compactMac() {
@@ -479,16 +508,16 @@ String statusJson() {
   doc["mac"] = WiFi.macAddress();
   doc["device_id"] = String("esp-") + compactMac();
   doc["ip"] = WiFi.localIP().toString();
-  doc["ap_ip"] = WiFi.softAPIP().toString();
-  doc["ap_ssid"] = setupApSsid;
+  doc["ap_ip"] = "";
+  doc["ap_ssid"] = "";
   doc["serial"] = pr.serial.length() ? pr.serial : stored.serial;
   doc["name"] = pr.displayName.length() ? pr.displayName : stored.name;
+  doc["model"] = normalizedModelName(pr.model.length() ? pr.model : stored.model);
+  doc["layout"] = stored.layout;
   doc["mqtt_host"] = stored.mqttHost;
   doc["mqtt_username"] = stored.mqttUsername.length() ? "set" : "";
   doc["mqtt_connected"] = mqttNet.connected();
   doc["brightness"] = stored.brightness;
-  doc["brightness_active"] = appliedBrightness;
-  doc["brightness_dimmed"] = brightnessDimmed;
   doc["printer_count"] = printerOptionCount;
   doc["online"] = pr.online;
   doc["status"] = pr.status;
@@ -498,6 +527,7 @@ String statusJson() {
   doc["right_nozzle_temp"] = pr.rightNozzleTemp;
   doc["dual_nozzle"] = pr.dualNozzle;
   doc["bed_temp"] = pr.bedTemp;
+  doc["chamber_temp"] = pr.chamberTemp;
   doc["remaining_min"] = pr.remainingMin;
   doc["current_layer"] = pr.currentLayer;
   doc["total_layers"] = pr.totalLayers;
@@ -615,7 +645,6 @@ bool selectPrinterBySerial(const String& serial) {
         pr.totalLayers = -1;
         pr.status = "prepare";
         printerStatusReceived = false;
-        inactiveSince = millis();
         cache.baseDrawn = false;
         mqttReconnectPending = true;
       }
@@ -629,36 +658,26 @@ bool selectPrinterBySerial(const String& serial) {
 
 String espHomeHtml() {
   String ip = WiFi.localIP().toString();
-  String ap = WiFi.softAPIP().toString();
   String selected = stored.name.length() ? stored.name : stored.serial;
   String body;
-  body.reserve(5200);
+  body.reserve(1800);
   body += F("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
-  body += F("<title>PrintSphere Lite ESP 配置</title><style>body{margin:0;background:#f6f7f8;color:#1f2933;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}main{max-width:760px;margin:0 auto;padding:16px}section{background:#fff;border:1px solid #dde2e7;border-radius:8px;padding:14px;margin:12px 0}h1{font-size:22px;margin:6px 0 12px}h2{font-size:16px;margin:0 0 8px}label{display:block;font-size:13px;color:#52606d;margin:10px 0 4px}input,select{width:100%;box-sizing:border-box;border:1px solid #ccd3db;border-radius:6px;padding:9px;font-size:14px}button{border:0;border-radius:6px;background:#16784f;color:#fff;padding:9px 12px;font-size:14px;margin:8px 8px 0 0}.secondary{background:#52606d}.muted{color:#718096;font-size:13px}.ok{color:#137333}.warn{color:#b45309}.bad{color:#b42318}pre{white-space:pre-wrap;background:#101820;color:#d9e2ec;border-radius:8px;padding:10px;min-height:54px}</style></head><body><main>");
-  body += F("<h1>PrintSphere Lite ESP 配置</h1><p class=\"muted\">固件：");
+  body += F("<title>PrintSphere Lite ESP</title><style>body{margin:0;background:#f6f7f8;color:#1f2933;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}main{max-width:640px;margin:0 auto;padding:16px}section{background:#fff;border:1px solid #dde2e7;border-radius:8px;padding:14px;margin:12px 0}h1{font-size:22px;margin:6px 0 12px}h2{font-size:16px;margin:0 0 8px}.muted{color:#718096;font-size:13px}pre{white-space:pre-wrap;background:#101820;color:#d9e2ec;border-radius:8px;padding:10px;min-height:54px}</style></head><body><main>");
+  body += F("<h1>PrintSphere Lite ESP</h1><p class=\"muted\">固件：");
   body += FIRMWARE_VERSION;
   body += F("</p><section><h2>当前状态</h2><p>局域网 IP：");
   body += htmlEscape(ip);
-  body += F("<br>配置热点：");
-  body += htmlEscape(setupApSsid);
-  body += F(" / http://");
-  body += htmlEscape(ap);
-  body += F(":");
-  body += String(ESP_CONFIG_PORT);
-  body += F("/<br>当前打印机：");
+  body += F("<br>设备：");
   body += htmlEscape(selected.length() ? selected : String("未选择"));
+  body += F("<br>机型：");
+  body += htmlEscape(normalizedModelName(stored.model));
   body += F("<br>MQTT：");
-  body += mqttNet.connected() ? F("<span class=\"ok\">已连接</span>") : F("<span class=\"warn\">未连接</span>");
-  body += F("</p><button onclick=\"refreshStatus()\">刷新状态</button></section>");
-  body += F("<section><h2>WiFi 配置</h2><p class=\"muted\">可连接 ESP 热点后在这里配置 WiFi。保存后 ESP 会自动重连。</p><label>附近 WiFi</label><select id=\"wifiList\" onchange=\"wifiSsid.value=this.value\"><option value=\"\">点击扫描</option></select><button class=\"secondary\" onclick=\"scanWifi()\">扫描 WiFi</button><label>WiFi 名称</label><input id=\"wifiSsid\" value=\"");
-  body += htmlEscape(stored.wifiSsid);
-  body += F("\"><label>WiFi 密码</label><input id=\"wifiPassword\" type=\"password\" placeholder=\"留空则不修改\"><button onclick=\"saveWifi()\">保存 WiFi</button></section>");
-  body += F("<section><h2>切换显示打印机</h2><p class=\"muted\">打印机列表需要先由电脑端配置工具登录 Bambu 云后同步到 ESP。之后可在这里无线切换。</p><select id=\"printerList\"><option value=\"\">正在读取...</option></select><button onclick=\"selectPrinter()\">显示这台</button><button class=\"secondary\" onclick=\"loadPrinters()\">刷新列表</button></section>");
-  body += F("<section><h2>日志</h2><pre id=\"log\">就绪</pre></section>");
-  body += F("<script>const $=id=>document.getElementById(id);function log(x){$('log').textContent=typeof x==='string'?x:JSON.stringify(x,null,2)}async function api(u){const r=await fetch(u,{cache:'no-store'});const t=await r.text();try{return JSON.parse(t)}catch{return t}}async function refreshStatus(){log(await api('/api/status'))}async function scanWifi(){const d=await api('/api/wifi/scan');$('wifiList').innerHTML='<option value=\"\">请选择 WiFi</option>'+(d.networks||[]).map(n=>'<option value=\"'+n.ssid.replace(/\"/g,'&quot;')+'\">'+n.ssid+'（'+(n.signal||0)+'%）</option>').join('');log(d)}async function saveWifi(){const p=new URLSearchParams();p.set('wifi_ssid',$('wifiSsid').value);if($('wifiPassword').value)p.set('wifi_password',$('wifiPassword').value);log(await api('/api/config-url?'+p.toString()))}async function loadPrinters(){const d=await api('/api/printers');$('printerList').innerHTML=(d.printers||[]).length?(d.printers||[]).map(p=>'<option value=\"'+p.serial+'\" '+(p.selected?'selected':'')+'>'+((p.name||p.serial)+' / '+(p.model||''))+'</option>').join(''):'<option value=\"\">暂无已同步打印机</option>';log(d)}async function selectPrinter(){const s=$('printerList').value;if(!s)return log('请选择打印机');log(await api('/api/select-printer?serial='+encodeURIComponent(s)));setTimeout(refreshStatus,800)}loadPrinters();</script></main></body></html>");
+  body += mqttNet.connected() ? F("已连接") : F("未连接");
+  body += F("</p></section><section><h2>配置方式</h2><p class=\"muted\">请使用电脑端后端配置工具，通过 USB 串口写入 WiFi、Bambu 云 token 和要显示的打印机。此页面只用于查看 ESP 是否已联网。</p></section>");
+  body += F("<section><h2>状态 JSON</h2><pre id=\"log\"></pre></section>");
+  body += F("<script>async function refreshStatus(){const r=await fetch('/api/status',{cache:'no-store'});document.getElementById('log').textContent=await r.text()}refreshStatus();setInterval(refreshStatus,5000);</script></main></body></html>");
   return body;
 }
-
 String applyConfigBody(const String& body, int& statusCode) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, body);
@@ -675,6 +694,10 @@ String applyConfigBody(const String& body, int& statusCode) {
   const char* token = doc["token"] | doc["access_token"] | "";
   const char* serial = doc["serial"] | doc["printer_serial"] | "";
   const char* name = doc["name"] | doc["display_name"] | "";
+  const char* model = doc["model"] | doc["printer_model"] | "";
+  const char* alias = doc["alias"] | doc["display_alias"] | "";
+  const char* layout = doc["layout"] | doc["display_layout"] | "";
+  const char* aliasBitmapHex = doc["alias_bitmap_hex"] | "";
   const char* printersPayload = doc["printers_json"] | "";
   int requestedBrightness = doc["brightness"] | doc["brightness_percent"] | -1;
   bool wifiChanged = false;
@@ -722,12 +745,12 @@ String applyConfigBody(const String& body, int& statusCode) {
       pr.rightNozzleTemp = -1;
       pr.dualNozzle = false;
       pr.bedTemp = -1;
+      pr.chamberTemp = -1;
       pr.remainingMin = -1;
       pr.currentLayer = -1;
       pr.totalLayers = -1;
       pr.status = "prepare";
       printerStatusReceived = false;
-      inactiveSince = millis();
       mqttChanged = true;
     } else {
       pr.serial = serial;
@@ -738,7 +761,28 @@ String applyConfigBody(const String& body, int& statusCode) {
     pr.displayName = name;
     cache.baseDrawn = false;
   }
-  if (requestedBrightness > 0) {
+  if (model[0]) {
+    stored.model = model;
+    pr.model = model;
+    cache.baseDrawn = false;
+  }
+  if (alias[0] || doc["alias"].is<const char*>() || doc["display_alias"].is<const char*>()) {
+    stored.alias = alias;
+    cache.baseDrawn = false;
+  }
+  if (layout[0]) {
+    String nextLayout = layout;
+    nextLayout.toLowerCase();
+    stored.layout = nextLayout == "dashboard" ? "dashboard" : "classic";
+    cache.baseDrawn = false;
+  }
+  if (aliasBitmapHex[0] || doc["alias_bitmap_hex"].is<const char*>()) {
+    stored.aliasBitmapHex = aliasBitmapHex;
+    stored.aliasBitmapW = doc["alias_bitmap_w"] | 0;
+    stored.aliasBitmapH = doc["alias_bitmap_h"] | 0;
+    cache.baseDrawn = false;
+  }
+  if (requestedBrightness >= 0) {
     uint8_t normalized = normalizeBrightness(requestedBrightness);
     if (stored.brightness != normalized) {
       stored.brightness = normalized;
@@ -752,7 +796,7 @@ String applyConfigBody(const String& body, int& statusCode) {
     mqttReconnectPending = true;
   }
   displayDirty = true;
-  if (brightnessChanged) updateBrightness(millis());
+  if (brightnessChanged) applyBrightness(stored.brightness);
 
   JsonDocument outDoc;
   outDoc["ok"] = ok;
@@ -760,7 +804,7 @@ String applyConfigBody(const String& body, int& statusCode) {
   outDoc["name"] = stored.name;
   outDoc["ip"] = WiFi.localIP().toString();
   outDoc["brightness"] = stored.brightness;
-  outDoc["brightness_active"] = appliedBrightness;
+  outDoc["layout"] = stored.layout;
   String out;
   serializeJson(outDoc, out);
   statusCode = ok ? 200 : 500;
@@ -816,8 +860,10 @@ String configBodyFromQuery(const String& query) {
       if (key == "wifi_ssid" || key == "wifi_password" || key == "region" ||
           key == "mqtt_host" || key == "mqtt_username" || key == "token" ||
           key == "access_token" || key == "serial" || key == "printer_serial" ||
-          key == "name" || key == "display_name" || key == "printers_json" ||
-          key == "brightness" || key == "brightness_percent") {
+          key == "name" || key == "display_name" || key == "model" || key == "printer_model" ||
+          key == "alias" || key == "display_alias" || key == "layout" || key == "display_layout" ||
+          key == "alias_bitmap_hex" || key == "alias_bitmap_w" || key == "alias_bitmap_h" ||
+          key == "printers_json" || key == "brightness" || key == "brightness_percent") {
         doc[key] = value;
       }
     }
@@ -932,9 +978,8 @@ void restartEspServer() {
     apiServer.close();
     delay(20);
     apiServer.begin();
-    Serial.printf("ESP server restarted: sta=http://%s:%d/ ap=http://%s:%d/\n",
-                  WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT,
-                  WiFi.softAPIP().toString().c_str(), ESP_CONFIG_PORT);
+    Serial.printf("ESP server restarted: http://%s:%d/\n",
+                  WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT);
   }
 }
 
@@ -962,9 +1007,8 @@ void startEspServer() {
   if (serverStarted) return;
   apiServer.begin();
   serverStarted = true;
-  Serial.printf("ESP server: sta=http://%s:%d/ ap=http://%s:%d/\n",
-                WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT,
-                WiFi.softAPIP().toString().c_str(), ESP_CONFIG_PORT);
+  Serial.printf("ESP server: http://%s:%d/\n",
+                WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT);
 }
 
 bool mqttConfigReady() {
@@ -1196,6 +1240,28 @@ void applyPrint(JsonObject print) {
   if (f == -999) f = nestedBedTemp(print, -999);
   if (f != -999) pr.bedTemp = f;
 
+  static const char* const modelKeys[] = {
+    "model", "dev_model_name", "dev_product_name", "product_name"
+  };
+  const char* model = jsonStringForKeys(print, modelKeys, sizeof(modelKeys) / sizeof(modelKeys[0]));
+  if (model[0]) pr.model = model;
+
+  static const char* const chamberKeys[] = {
+    "chamber_temper", "chamber_temp", "chamber_temperature", "chamberTemperature",
+    "chamberTemp", "chamberTargetTemp", "chamberTargetTemperature",
+    "chamber_target_temper", "chamber_target_temp", "chamber_target_temperature",
+    "target_chamber_temp", "targetChamberTemp", "ctt"
+  };
+  f = jsonFloatForKeys(print, chamberKeys, sizeof(chamberKeys) / sizeof(chamberKeys[0]), -999);
+  String chamberModel = pr.model.length() ? pr.model : stored.model;
+  if ((f == -999 || f < 0 || f > 120) && chamberFallbackAllowedForModel(chamberModel)) {
+    f = jsonFloat(print["device"]["ctc"]["info"]["temp"], -999);
+  }
+  if ((f == -999 || f < 0 || f > 120) && chamberFallbackAllowedForModel(chamberModel)) {
+    f = jsonFloat(print["info"]["temp"], -999);
+  }
+  if (f != -999 && f > -50 && f < 120) pr.chamberTemp = f;
+
   static const char* const remainingMinuteKeys[] = {
     "mc_remaining_time", "remaining_minutes", "remainingMinutes", "remaining_min", "remain_time"
   };
@@ -1311,6 +1377,25 @@ void parseMqttPayload(uint8_t* payload, size_t length) {
   filter["print"]["hotbed_temper"] = true;
   filter["print"]["hotbed_temp"] = true;
   filter["print"]["hotbed_temperature"] = true;
+  filter["print"]["chamber_temper"] = true;
+  filter["print"]["chamber_temp"] = true;
+  filter["print"]["chamber_temperature"] = true;
+  filter["print"]["chamberTemperature"] = true;
+  filter["print"]["chamberTemp"] = true;
+  filter["print"]["chamberTargetTemp"] = true;
+  filter["print"]["chamberTargetTemperature"] = true;
+  filter["print"]["chamber_target_temper"] = true;
+  filter["print"]["chamber_target_temp"] = true;
+  filter["print"]["chamber_target_temperature"] = true;
+  filter["print"]["target_chamber_temp"] = true;
+  filter["print"]["targetChamberTemp"] = true;
+  filter["print"]["ctt"] = true;
+  filter["print"]["device"]["ctc"]["info"]["temp"] = true;
+  filter["print"]["info"]["temp"] = true;
+  filter["print"]["model"] = true;
+  filter["print"]["dev_model_name"] = true;
+  filter["print"]["dev_product_name"] = true;
+  filter["print"]["product_name"] = true;
   filter["print"]["mc_remaining_time"] = true;
   filter["print"]["remaining_minutes"] = true;
   filter["print"]["remainingMinutes"] = true;
@@ -1390,6 +1475,7 @@ bool connectMqtt() {
 
   publishMqttRequest("{\"info\":{\"sequence_id\":\"0\",\"command\":\"get_version\"}}");
   publishMqttRequest("{\"pushing\":{\"sequence_id\":\"0\",\"command\":\"start\"}}");
+  resetLivePrintFields();
   requestPrinterState();
   Serial.print("Cloud MQTT subscribed: ");
   Serial.println(topic);
@@ -1591,6 +1677,295 @@ uint16_t statusColor() {
   return C_DIM;
 }
 
+void drawBold(const String& text, int x, int y);
+String fitTextToWidth(String text, uint8_t font, int maxWidth, bool bold);
+
+String dashboardStatusText() {
+  if (isPrintingState(pr.status)) return "PRINT";
+  if (isPreparingState(pr.status)) return "PREP";
+  if (isPausedState(pr.status)) return "PAUSE";
+  if (isFinishedState(pr.status)) return "DONE";
+  if (isFailedState(pr.status)) return "ERR";
+  return "IDLE";
+}
+
+String timeText(int minutes) {
+  if (minutes < 0) return "--";
+  int h = minutes / 60;
+  int m = minutes % 60;
+  char b[18];
+  if (h > 0) snprintf(b, sizeof(b), "%dh%dm", h, m);
+  else snprintf(b, sizeof(b), "%dm", m);
+  return b;
+}
+
+String etaText() {
+  if (pr.remainingMin < 0) return "--";
+  time_t now = time(nullptr);
+  if (now < 1700000000) return "~";
+  now += (time_t)pr.remainingMin * 60;
+  struct tm* info = localtime(&now);
+  if (!info) return "~";
+  char b[8];
+  snprintf(b, sizeof(b), "%02d:%02d", info->tm_hour, info->tm_min);
+  return b;
+}
+
+int hexNibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return 0;
+}
+
+void drawProgmemHexBitmap(const char* hex, int w, int h, int x, int y, uint16_t color) {
+  int bytesPerRow = (w + 7) / 8;
+  for (int row = 0; row < h; ++row) {
+    for (int col = 0; col < w; ++col) {
+      int byteIndex = row * bytesPerRow + col / 8;
+      int hexIndex = byteIndex * 2;
+      char hi = (char)pgm_read_byte(hex + hexIndex);
+      char lo = (char)pgm_read_byte(hex + hexIndex + 1);
+      uint8_t value = (hexNibble(hi) << 4) | hexNibble(lo);
+      if (value & (0x80 >> (col & 7))) tft.drawPixel(x + col, y + row, color);
+    }
+  }
+}
+
+void drawCnCentered(const char* hex, int w, int h, int x, int y, int boxW, int boxH, uint16_t color) {
+  drawProgmemHexBitmap(hex, w, h, x + (boxW - w) / 2, y + (boxH - h) / 2, color);
+}
+
+void drawAliasBitmap(int x, int y, uint16_t color) {
+  int w = stored.aliasBitmapW;
+  int h = stored.aliasBitmapH;
+  if (w <= 0 || h <= 0 || !stored.aliasBitmapHex.length()) return;
+  int bytesPerRow = (w + 7) / 8;
+  for (int row = 0; row < h; ++row) {
+    for (int col = 0; col < w; ++col) {
+      int byteIndex = row * bytesPerRow + col / 8;
+      int hexIndex = byteIndex * 2;
+      if (hexIndex + 1 >= stored.aliasBitmapHex.length()) return;
+      uint8_t value = (hexNibble(stored.aliasBitmapHex[hexIndex]) << 4) | hexNibble(stored.aliasBitmapHex[hexIndex + 1]);
+      if (value & (0x80 >> (col & 7))) tft.drawPixel(x + col, y + row, color);
+    }
+  }
+}
+
+void drawDashboardStatusCn(int x, int y, int w, int h) {
+  if (isPrintingState(pr.status)) {
+    drawCnCentered(CN_PRINT, 55, 23, x, y, w, h, C_TEXT);
+    return;
+  }
+  if (isPreparingState(pr.status)) {
+    drawCnCentered(CN_READY, 55, 23, x, y, w, h, C_TEXT);
+    return;
+  }
+  if (isPausedState(pr.status)) {
+    drawCnCentered(CN_PAUSE, 36, 17, x, y, w, h, C_TEXT);
+    return;
+  }
+  if (isFinishedState(pr.status)) {
+    drawCnCentered(CN_DONE, 36, 17, x, y, w, h, C_TEXT);
+    return;
+  }
+  if (isFailedState(pr.status)) {
+    drawCnCentered(CN_ERR, 36, 17, x, y, w, h, C_TEXT);
+    return;
+  }
+  drawCnCentered(CN_IDLE, 36, 17, x, y, w, h, C_TEXT);
+}
+
+void drawDashboardTextBox(int x, int y, int w, int h, uint16_t bg, uint8_t font, uint16_t color, const String& text, bool bold = false) {
+  tft.fillRoundRect(x, y, w, h, 6, bg);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextFont(font);
+  tft.setTextColor(color, bg);
+  tft.setTextPadding(w - 8);
+  String shown = fitTextToWidth(text, font, w - 8, bold);
+  if (bold) drawBold(shown, x + w / 2, y + h / 2);
+  else tft.drawString(shown, x + w / 2, y + h / 2);
+  tft.setTextPadding(0);
+}
+
+String nozzleSummary() {
+  char b[20];
+  if (pr.dualNozzle && (pr.leftNozzleTemp >= 0 || pr.rightNozzleTemp >= 0)) {
+    char l[8], r[8];
+    if (pr.leftNozzleTemp >= 0) snprintf(l, sizeof(l), "%d", (int)(pr.leftNozzleTemp + 0.5f)); else strcpy(l, "--");
+    if (pr.rightNozzleTemp >= 0) snprintf(r, sizeof(r), "%d", (int)(pr.rightNozzleTemp + 0.5f)); else strcpy(r, "--");
+    snprintf(b, sizeof(b), "%s/%s", l, r);
+    return b;
+  }
+  if (pr.nozzleTemp >= 0) {
+    snprintf(b, sizeof(b), "%d", (int)(pr.nozzleTemp + 0.5f));
+    return b;
+  }
+  return "--";
+}
+
+String tempSummary(float value) {
+  if (value < 0) return "~";
+  char b[8];
+  snprintf(b, sizeof(b), "%d", (int)(value + 0.5f));
+  return b;
+}
+
+String normalizedModelName(const String& value) {
+  String raw = value;
+  raw.trim();
+  String key = raw;
+  key.toUpperCase();
+  key.replace("-", "");
+  key.replace("_", "");
+  key.replace(" ", "");
+  if (!key.length()) return raw;
+  if (key == "BLP001" || key.indexOf("X1C") >= 0 || key.indexOf("X1CARBON") >= 0) return "X1C";
+  if (key == "C11" || key.indexOf("P1P") >= 0) return "P1P";
+  if (key == "C12" || key.indexOf("P1S") >= 0) return "P1S";
+  if (key == "C13" || key.indexOf("X1E") >= 0) return "X1E";
+  if (key == "N1" || key.indexOf("A1MINI") >= 0) return "A1 mini";
+  if (key == "N2S" || key == "A1") return "A1";
+  if (key == "N6V2" || key.indexOf("X2D") >= 0) return "X2D";
+  if (key == "N7V2" || key.indexOf("P2S") >= 0) return "P2S";
+  if (key == "O1C2V2" || key.indexOf("H2C") >= 0) return "H2C";
+  if (key == "O1D" || key.indexOf("H2D") >= 0) return "H2D";
+  if (key == "O1S" || key.indexOf("H2S") >= 0) return "H2S";
+  return raw;
+}
+
+bool chamberFallbackAllowedForModel(const String& value) {
+  String model = normalizedModelName(value);
+  model.toUpperCase();
+  return model == "P2S" || model == "X2D" || model == "H2C" ||
+         model == "H2D" || model == "H2S";
+}
+
+void drawDashboardProgressRing(int progressValue) {
+  int pct = progressValue;
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+
+  tft.fillRect(18, 74, 108, 80, C_PANEL);
+  char b[12];
+  if (progressValue >= 0) snprintf(b, sizeof(b), "%d%%", progressValue);
+  else strcpy(b, "--");
+  drawDashboardTextBox(21, 99, 102, 34, C_PANEL, 4, C_TEXT, b, false);
+}
+
+void drawDashboardMetricCard(int x, int y, const char* labelHex, int labelW, int labelH, const String& value, uint8_t valueFont = 4) {
+  tft.fillRoundRect(x, y, 100, 48, 7, C_PANEL2);
+  drawCnCentered(labelHex, labelW, labelH, x + 6, y + 4, 88, 20, C_TEXT);
+  drawDashboardTextBox(x + 8, y + 24, 84, 20, C_PANEL2, valueFont, C_TEXT, value, false);
+}
+
+void drawDashboardCelsiusValue(int x, int y, int w, int h, const String& value, uint8_t font) {
+  tft.fillRoundRect(x, y, w, h, 6, C_PANEL2);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(C_TEXT, C_PANEL2);
+  tft.setTextFont(font);
+  uint8_t drawFont = font;
+  if (tft.textWidth(value) > w - 2) {
+    drawFont = 2;
+    tft.setTextFont(drawFont);
+  }
+  tft.setTextPadding(w);
+  tft.drawString(value, x + w / 2, y + h / 2);
+  tft.setTextPadding(0);
+}
+
+void drawDashboardTempCard(int x, int y, const char* labelHex, int labelW, int labelH, const String& value, uint8_t valueFont = 4) {
+  tft.fillRoundRect(x, y, 100, 48, 7, C_PANEL2);
+  drawCnCentered(labelHex, labelW, labelH, x + 6, y + 4, 88, 20, C_TEXT);
+  drawDashboardCelsiusValue(x + 2, y + 24, 96, 20, value, valueFont);
+}
+
+void drawDashboardBase() {
+  tft.fillScreen(0x2B6D);
+  tft.drawRoundRect(4, 4, 232, 232, 8, 0x9E9F);
+  tft.fillRoundRect(14, 14, 96, 32, 16, C_PANEL2);
+  tft.fillRoundRect(130, 14, 96, 32, 16, C_PANEL2);
+  tft.fillRoundRect(14, 60, 100, 48, 7, C_PANEL2);
+  tft.fillRoundRect(126, 60, 100, 48, 7, C_PANEL2);
+  tft.fillRoundRect(14, 116, 100, 48, 7, C_PANEL2);
+  tft.fillRoundRect(126, 116, 100, 48, 7, C_PANEL2);
+  tft.fillRoundRect(14, 176, 100, 48, 5, C_PANEL2);
+  tft.fillRoundRect(126, 176, 100, 48, 5, C_PANEL2);
+  cache.progressPct = -999;
+  cache.nozzleTemp = -999;
+  cache.nozzleSide = -2;
+  cache.bedTemp = -999;
+  cache.chamberTemp = -999;
+  cache.remainingMin = -999;
+  cache.currentLayer = -999;
+  cache.totalLayers = -999;
+  cache.status = "";
+  cache.displayName = "";
+  cache.model = "";
+  cache.alias = "";
+  cache.layout = "dashboard";
+  cache.baseDrawn = true;
+  cache.offlineDrawn = false;
+}
+
+void drawDashboardFields() {
+  String model = normalizedModelName(pr.model.length() ? pr.model : stored.model);
+  if (model != cache.model) {
+    tft.fillRoundRect(14, 14, 96, 32, 16, C_PANEL2);
+    drawDashboardTextBox(20, 18, 84, 24, C_PANEL2, 4, C_TEXT, model.length() ? model : "--", false);
+    cache.model = model;
+  }
+
+  String st = dashboardStatusText();
+  if (st != cache.status) {
+    tft.fillRoundRect(130, 14, 96, 32, 16, C_PANEL2);
+    tft.fillCircle(142, 30, 4, statusColor());
+    drawDashboardStatusCn(150, 18, 70, 23);
+    cache.status = st;
+  }
+
+  int progressValue = pr.progress >= 0 ? (int)(pr.progress + 0.5f) : -1;
+  if (progressValue != cache.progressPct) {
+    char progressText[12];
+    if (progressValue >= 0) snprintf(progressText, sizeof(progressText), "%d%%", progressValue);
+    else strcpy(progressText, "--");
+    drawDashboardMetricCard(14, 60, CN_PROGRESS, 39, 23, progressText, 4);
+    cache.progressPct = progressValue;
+  }
+
+  String noz = nozzleSummary();
+  int nozzleKey = (int)(displayedNozzleTemp() + 0.5f);
+  if (nozzleKey != cache.nozzleTemp || displayedNozzleSide() != cache.nozzleSide) {
+    drawDashboardTempCard(14, 116, CN_NOZ, 39, 23, noz, 4);
+    cache.nozzleTemp = nozzleKey;
+    cache.nozzleSide = displayedNozzleSide();
+  }
+
+  int bed = pr.bedTemp >= 0 ? (int)(pr.bedTemp + 0.5f) : -1;
+  if (bed != cache.bedTemp) {
+    drawDashboardTempCard(126, 116, CN_BED, 39, 23, tempSummary(pr.bedTemp), 4);
+    cache.bedTemp = bed;
+  }
+
+  int chamber = pr.chamberTemp >= 0 ? (int)(pr.chamberTemp + 0.5f) : -1;
+  if (chamber != cache.chamberTemp) {
+    drawDashboardTempCard(126, 60, CN_CHAM, 39, 23, tempSummary(pr.chamberTemp), 4);
+    cache.chamberTemp = chamber;
+  }
+
+  if (pr.remainingMin != cache.remainingMin) {
+    tft.fillRoundRect(14, 176, 100, 48, 5, C_PANEL2);
+    tft.fillRoundRect(126, 176, 100, 48, 5, C_PANEL2);
+    drawCnCentered(CN_TIME, 63, 20, 18, 180, 92, 19, C_TEXT);
+    drawDashboardTextBox(18, 200, 92, 20, C_PANEL2, 4, C_TEXT, timeText(pr.remainingMin), false);
+    drawCnCentered(CN_ETA, 85, 19, 130, 181, 92, 18, C_TEXT);
+    drawDashboardTextBox(130, 200, 92, 20, C_PANEL2, 4, C_TEXT, etaText(), false);
+    cache.currentLayer = pr.currentLayer;
+    cache.totalLayers = pr.totalLayers;
+    cache.remainingMin = pr.remainingMin;
+  }
+}
+
 void drawBase() {
   tft.fillScreen(BG_BLACK);
   drawFrameTrack();
@@ -1602,11 +1977,15 @@ void drawBase() {
   cache.nozzleTemp = -999;
   cache.nozzleSide = -2;
   cache.bedTemp = -999;
+  cache.chamberTemp = -999;
   cache.remainingMin = -999;
   cache.currentLayer = -999;
   cache.totalLayers = -999;
   cache.status = "";
   cache.displayName = "";
+  cache.model = "";
+  cache.alias = "";
+  cache.layout = "classic";
   cache.baseDrawn = true;
   cache.offlineDrawn = false;
 }
@@ -1708,8 +2087,13 @@ void renderOffline() {
 
 void renderDisplay() {
   tft.startWrite();
-  if (!cache.baseDrawn || cache.offlineDrawn) drawBase();
-  updateFields();
+  if (stored.layout == "dashboard") {
+    if (!cache.baseDrawn || cache.offlineDrawn || cache.layout != "dashboard") drawDashboardBase();
+    drawDashboardFields();
+  } else {
+    if (!cache.baseDrawn || cache.offlineDrawn || cache.layout != "classic") drawBase();
+    updateFields();
+  }
   tft.endWrite();
 }
 
@@ -1725,14 +2109,13 @@ void setup() {
   pinMode(LCD_BL_PIN, OUTPUT);
   analogWriteRange(1023);
   analogWriteFreq(1000);
-  inactiveSince = millis();
   applyBrightness(stored.brightness);
 
   tft.fillScreen(BG_BLACK);
   drawTextBox(42, 92, 156, 28, 4, C_TEXT, "WIFI...", true);
   mqttNet.setInsecure();
-  mqttNet.setTimeout(2500);
-  startSetupAp();
+  mqttNet.setBufferSizes(512, 512);
+  mqttNet.setTimeout(8000);
   wifiConnect();
   if (wifiHasIp()) {
     tft.fillScreen(BG_BLACK);
@@ -1812,8 +2195,6 @@ void loop() {
     displayDirty = true;
   }
 
-  updateBrightness(now);
-
   if (displayDirty && now - lastDisplay >= DISPLAY_REFRESH) {
     displayDirty = false;
     lastDisplay = now;
@@ -1823,3 +2204,4 @@ void loop() {
 
   delay(10);
 }
+
