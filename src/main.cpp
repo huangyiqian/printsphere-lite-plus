@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // SD2 PrintSphere Lite - ESP8266 Bambu Cloud MQTT display
 // The companion backend only provisions cloud credentials and printer choice.
 // ============================================================
@@ -18,7 +18,7 @@ BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
 
-const char* FIRMWARE_VERSION = "firmware-v0.4.70-dual-nozzle-fit";
+const char* FIRMWARE_VERSION = "firmware-v0.4.80-webcfg";
 
 #define BG_BLACK  0x0000
 #define C_RING    0x07E0
@@ -659,23 +659,46 @@ bool selectPrinterBySerial(const String& serial) {
 String espHomeHtml() {
   String ip = WiFi.localIP().toString();
   String selected = stored.name.length() ? stored.name : stored.serial;
+  String modelName = normalizedModelName(stored.model);
   String body;
-  body.reserve(1800);
-  body += F("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
-  body += F("<title>PrintSphere Lite ESP</title><style>body{margin:0;background:#f6f7f8;color:#1f2933;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}main{max-width:640px;margin:0 auto;padding:16px}section{background:#fff;border:1px solid #dde2e7;border-radius:8px;padding:14px;margin:12px 0}h1{font-size:22px;margin:6px 0 12px}h2{font-size:16px;margin:0 0 8px}.muted{color:#718096;font-size:13px}pre{white-space:pre-wrap;background:#101820;color:#d9e2ec;border-radius:8px;padding:10px;min-height:54px}</style></head><body><main>");
-  body += F("<h1>PrintSphere Lite ESP</h1><p class=\"muted\">固件：");
-  body += FIRMWARE_VERSION;
-  body += F("</p><section><h2>当前状态</h2><p>局域网 IP：");
-  body += htmlEscape(ip);
-  body += F("<br>设备：");
-  body += htmlEscape(selected.length() ? selected : String("未选择"));
-  body += F("<br>机型：");
-  body += htmlEscape(normalizedModelName(stored.model));
-  body += F("<br>MQTT：");
-  body += mqttNet.connected() ? F("已连接") : F("未连接");
-  body += F("</p></section><section><h2>配置方式</h2><p class=\"muted\">请使用电脑端后端配置工具，通过 USB 串口写入 WiFi、Bambu 云 token 和要显示的打印机。此页面只用于查看 ESP 是否已联网。</p></section>");
-  body += F("<section><h2>状态 JSON</h2><pre id=\"log\"></pre></section>");
-  body += F("<script>async function refreshStatus(){const r=await fetch('/api/status',{cache:'no-store'});document.getElementById('log').textContent=await r.text()}refreshStatus();setInterval(refreshStatus,5000);</script></main></body></html>");
+  body.reserve(3000);
+  body += F("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Cache-Control\" content=\"no-cache,no-store,must-revalidate\">");
+  body += F("<title>PrintSphere Lite</title><style>");
+  body += F("*{box-sizing:border-box;margin:0;padding:0}body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;min-height:100vh}.container{max-width:600px;margin:0 auto}");
+  body += F("h1{font-size:20px;margin:0 0 4px;color:#58a6ff}.sub{color:#8b949e;font-size:13px;margin-bottom:16px}");
+  body += F(".card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:12px}.card h2{font-size:15px;margin:0 0 12px;color:#f0f6fc}");
+  body += F(".row{display:flex;justify-content:space-between;align-items:center;padding:4px 0}.label{color:#8b949e;font-size:13px}.value{color:#f0f6fc;font-size:14px}");
+  body += F("input[type=range]{width:100%;margin:8px 0;height:6px;-webkit-appearance:none;background:#30363d;border-radius:3px;outline:none}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#58a6ff;cursor:pointer}");
+  body += F(".bv{font-size:28px;font-weight:700;color:#58a6ff;text-align:center;margin:4px 0 8px}");
+  body += F(".lbtn{display:flex;gap:8px;margin-top:8px}.lbtn button{flex:1;padding:10px;border:1px solid #30363d;border-radius:6px;background:#0d1117;color:#c9d1d9;font-size:13px;cursor:pointer}.lbtn button.sel{background:#1f6feb;border-color:#1f6feb;color:#fff}.lbtn button:hover:not(.sel){background:#21262d}");
+  body += F("pre{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-size:12px;color:#8b949e;overflow-x:auto;white-space:pre-wrap;min-height:60px;margin-top:8px;display:none}");
+  body += F(".tg{background:none;border:1px solid #30363d;color:#8b949e;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px}.tg:hover{background:#21262d}");
+  body += F("</style></head><body><div class=\"container\">");
+  body += F("<h1>PrintSphere Lite</h1><p class=\"sub\">固件: "); body += FIRMWARE_VERSION; body += F(" | IP: "); body += htmlEscape(ip); body += F("</p>");
+  body += F("<div class=\"card\"><h2>设备状态</h2>");
+  body += F("<div class=\"row\"><span class=\"label\">打印机</span><span class=\"value\">"); body += htmlEscape(selected.length() ? selected : String("未选择")); body += F("</span></div>");
+  body += F("<div class=\"row\"><span class=\"label\">机型</span><span class=\"value\">"); body += htmlEscape(modelName); body += F("</span></div>");
+  body += F("<div class=\"row\"><span class=\"label\">MQTT</span><span class=\"value\">"); body += mqttNet.connected() ? F("已连接") : F("未连接"); body += F("</span></div>");
+  body += F("</div>");
+  body += F("<div class=\"card\"><h2>屏幕亮度</h2>");
+  body += F("<div class=\"bv\" id=\"bv\">"); body += String(stored.brightness); body += F("</div>");
+  body += F("<input type=\"range\" id=\"br\" min=\"0\" max=\"100\" value=\""); body += String(stored.brightness); body += F("\">");
+  body += F("<p style=\"color:#8b949e;font-size:12px;text-align:center;margin-top:4px\">松开滑块后自动生效</p></div>");
+  body += F("<div class=\"card\"><h2>屏幕布局</h2><div class=\"lbtn\">");
+  body += F("<button id=\"lc0\" onclick=\"setLayout('classic')\" class=\""); body += stored.layout == "classic" ? F("sel") : F(""); body += F("\">经典样式</button>");
+  body += F("<button id=\"lc1\" onclick=\"setLayout('dashboard')\" class=\""); body += stored.layout == "dashboard" ? F("sel") : F(""); body += F("\">仪表盘</button>");
+  body += F("<button id=\"lc2\" onclick=\"setLayout('clock')\" class=\""); body += stored.layout == "clock" ? F("sel") : F(""); body += F("\">时钟</button>");
+  body += F("</div></div>");
+  body += F("<div class=\"card\"><h2>实时数据 <button class=\"tg\" onclick=\"tj()\">查看 JSON</button></h2><pre id=\"log\"></pre></div>");
+  body += F("<script>");
+  body += F("async function rs(){try{const r=await fetch('/api/status',{cache:'no-store'});const j=await r.json();document.getElementById('log').textContent=JSON.stringify(j,null,2)}catch(e){}}");
+  body += F("function tj(){const e=document.getElementById('log');if(e.style.display=='block'){e.style.display='none';this.textContent='查看 JSON'}else{e.style.display='block';rs();this.textContent='隐藏 JSON'}}");
+  body += F("let b=document.getElementById('br');if(b){");
+  body += F("b.addEventListener('change',function(){var x=new XMLHttpRequest();x.open('POST','/api/config',true);x.setRequestHeader('Content-Type','application/json');x.send('{\"brightness\":'+this.value+'}')});");
+  body += F("b.addEventListener('input',function(){document.getElementById('bv').textContent=this.value})}");
+  body += F("async function setLayout(v){document.querySelectorAll('.lbtn button').forEach(b=>b.classList.remove('sel'));document.getElementById('lc'+['classic','dashboard','clock'].indexOf(v)).classList.add('sel');var x=new XMLHttpRequest();x.open('POST','/api/config',true);x.setRequestHeader('Content-Type','application/json');x.send('{\"layout\":\"'+v+'\"}')}");
+  body += F("setInterval(rs,5000);");
+  body += F("</script></div></body></html>");
   return body;
 }
 String applyConfigBody(const String& body, int& statusCode) {
@@ -921,9 +944,20 @@ void handleApiClient() {
   client.setTimeout(200);
   String line = client.readStringUntil('\n');
   line.trim();
+  int contentLen = 0;
   while (client.connected() && client.available()) {
-    String discard = client.readStringUntil('\n');
-    if (discard == "\r" || discard.length() == 0) break;
+    String hdr = client.readStringUntil('\n');
+    if (hdr == "\r" || hdr.length() == 0) break;
+    if (hdr.startsWith("Content-Length:") || hdr.startsWith("content-length:")) {
+      contentLen = hdr.substring(hdr.indexOf(':') + 1).toInt();
+    }
+  }
+  String postBody = "";
+  if (contentLen > 0 && contentLen < 4096) {
+    for (int i = 0; i < contentLen; i++) {
+      if (client.available()) postBody += (char)client.read();
+      else break;
+    }
   }
   if (!line.length()) {
     client.stop();
@@ -968,6 +1002,8 @@ void handleApiClient() {
     cache.offlineDrawn = false;
     displayDirty = true;
     sendHttpJson(client, 200, "{\"ok\":true}");
+  } else if (method == "POST" && path == "/api/config") {
+    queueHttpConfig(client, postBody);
   } else {
     sendHttpJson(client, 404, "{\"ok\":false,\"error\":\"not found\"}");
   }
@@ -2090,6 +2126,10 @@ void renderDisplay() {
   if (stored.layout == "dashboard") {
     if (!cache.baseDrawn || cache.offlineDrawn || cache.layout != "dashboard") drawDashboardBase();
     drawDashboardFields();
+  } else if (stored.layout == "clock") {
+    drawClockScreen();
+    cache.baseDrawn = true;
+    cache.layout = "clock";
   } else {
     if (!cache.baseDrawn || cache.offlineDrawn || cache.layout != "classic") drawBase();
     updateFields();
@@ -2097,6 +2137,43 @@ void renderDisplay() {
   tft.endWrite();
 }
 
+
+// Placeholder: clock screen will go here
+
+
+void drawClockScreen() {
+  tft.fillScreen(0x0000);
+  int x[6] = {16, 56, 96, 136, 176, 216};
+  for (int i = 0; i < 6; i++) {
+    tft.fillRoundRect(x[i], 76, 32, 60, 8, 0x0841);
+    tft.drawRoundRect(x[i], 76, 32, 60, 8, 0x18E3);
+  }
+  int h = hour(), m = minute(), s = second();
+  if (s % 2 == 0) {
+    tft.fillCircle(85, 96, 3, 0xFD20); tft.fillCircle(85, 118, 3, 0xFD20);
+    tft.fillCircle(165, 96, 3, 0xFD20); tft.fillCircle(165, 118, 3, 0xFD20);
+  } else {
+    tft.drawCircle(85, 96, 3, 0x4208); tft.drawCircle(85, 118, 3, 0x4208);
+    tft.drawCircle(165, 96, 3, 0x4208); tft.drawCircle(165, 118, 3, 0x4208);
+  }
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(0xFD20, 0x0841);
+  char buf[4];
+  snprintf(buf, 4, "%02d", h); tft.drawString(buf, x[0] + 16, 106, 7);
+  snprintf(buf, 4, "%02d", m); tft.drawString(buf, x[2] + 16, 106, 7);
+  snprintf(buf, 4, "%02d", s); tft.drawString(buf, x[4] + 16, 106, 7);
+  char dt[32];
+  snprintf(dt, 32, "%04d-%02d-%02d", year(), month(), day());
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(0x7B4D, 0x0000);
+  tft.drawString(dt, 120, 16, 2);
+  const char* wd[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+  tft.setTextDatum(BC_DATUM);
+  tft.setTextColor(0xFD20, 0x0000);
+  tft.drawString(wd[(int)weekday() - 1], 120, 222, 2);
+  cache.baseDrawn = true;
+  cache.layout = "clock";
+}
 void setup() {
   Serial.begin(115200);
   delay(300);

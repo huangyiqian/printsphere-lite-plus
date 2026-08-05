@@ -1,0 +1,115 @@
+{
+  "wifi": {
+    "ssid": "",
+    "password": ""
+  },
+  "cloud": {
+    "region": "cn",
+    "account": "",
+    "access_token": "",
+    "mqtt_username": "",
+    "token_expires_at": 0
+  },
+  "printer": {
+    "serial": "01P00A3A1700489",
+    "access_code": "",
+    "display_name": "P1SC",
+    "model": ""
+  },
+  "display": {
+    "brightness": 15,
+    "layout": "dashboard",
+    "alias": "",
+    "alias_bitmap_hex": "",
+    "alias_bitmap_w": 0,
+    "alias_bitmap_h": 0
+  },
+  "esp": {
+    "host": "192.168.31.113",
+    "port": 8081,
+    "serial_port": "COM4",
+    "wifi_status": "configured",
+    "last_ip": "192.168.31.113",
+    "last_checked_at": 1785855642813,
+    "last_error": ""
+  },
+  "defaults": {
+    "wifi": {
+      "ssid": "",
+      "password": ""
+    }
+  },
+  "active_esp_id": "esp-24d7ebef7566",
+  "esp_devices": {
+    "default": {
+      "id": "default",
+      "label": "默认 ESP",
+      "chip_id": "",
+      "mac": "",
+      "device_id": "default",
+      "last_seen_at": 0,
+      "wifi": {
+        "ssid": "",
+        "password": ""
+      },
+      "printer": {
+        "serial": "",
+        "access_code": "",
+        "display_name": "",
+        "model": ""
+      },
+      "display": {
+        "brightness": 100,
+        "layout": "classic",
+        "alias": "",
+        "alias_bitmap_hex": "",
+        "alias_bitmap_w": 0,
+        "alias_bitmap_h": 0
+      },
+      "esp": {
+        "host": "",
+        "port": 8081,
+        "serial_port": "COM7",
+        "wifi_status": "unknown",
+        "last_ip": "",
+        "last_checked_at": 0,
+        "last_error": ""
+      }
+    },
+    "esp-24d7ebef7566": {
+      "id": "esp-24d7ebef7566",
+      "label": "ESP 24:D7:EB:EF:75:66",
+      "chip_id": "ef7566",
+      "mac": "24:D7:EB:EF:75:66",
+      "device_id": "esp-24d7ebef7566",
+      "last_seen_at": 1785855642813,
+      "wifi": {
+        "ssid": "",
+        "password": ""
+      },
+      "printer": {
+        "serial": "01P00A3A1700489",
+        "access_code": "",
+        "display_name": "P1SC",
+        "model": ""
+      },
+      "display": {
+        "brightness": 15,
+        "layout": "dashboard",
+        "alias": "",
+        "alias_bitmap_hex": "",
+        "alias_bitmap_w": 0,
+        "alias_bitmap_h": 0
+      },
+      "esp": {
+        "host": "192.168.31.113",
+        "port": 8081,
+        "serial_port": "COM4",
+        "wifi_status": "configured",
+        "last_ip": "192.168.31.113",
+        "last_checked_at": 1785855642813,
+        "last_error": ""
+      }
+    }
+  }
+}
