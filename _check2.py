@@ -1,0 +1,13 @@
+﻿with open('M:/codex/1/src/main.cpp','r',encoding='utf-8') as f:
+    c = f.read()
+print('struct AmsTrayInfo:', 'struct AmsTrayInfo' in c)
+print('amsSlots[4]:', 'AmsTrayInfo amsSlots' in c)
+print('amsHash:', 'uint32_t amsHash' in c)
+print('AMS reset:', 'pr.amsSlots[i].remain = -1' in c)
+print('AMS filter:', 'filter["print"]["ams"]' in c)
+print('AMS parsing:', 'Parse AMS tray data' in c)
+print('manualStringHash:', 'manualStringHash' in c)
+print('filamentColor:', 'filamentColor' in c)
+print('amsHash reset:', 'cache.amsHash = 0;' in c)
+print('AMS display:', 'AMS filament display' in c)
+print('File size:', len(c))

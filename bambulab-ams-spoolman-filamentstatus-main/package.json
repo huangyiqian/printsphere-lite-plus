@@ -1,0 +1,21 @@
+{
+  "dependencies": {
+    "async-mqtt": "^2.6.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "fs-extra": "^11.3.5",
+    "got": "^14.6.6"
+  },
+  "name": "bambulab-ams-spoolman-filamentstatus",
+  "version": "1.2.1",
+  "main": "app.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "This project integrates a Bambulab AMS system with Spoolman to synchronize filament spool usage. It listens for MQTT updates from the printer and manages spools on Spoolman."
+}

@@ -1,4 +1,4 @@
-﻿const http = require("http");
+const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
@@ -1724,7 +1724,7 @@ function html() {
   const urls = serviceUrls();
   const urlLine = urls.length > 1 ? `电脑本机：${urls[0]}　手机同 WiFi：${urls.slice(1).join(" 或 ")}` : `电脑本机：${urls[0]}`;
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PrintSphere Lite 配置工具</title><style>
+<title>PrintSphere Lite Plus 配置工具</title><style>
 body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7f8;color:#1f2933}
 main{max-width:1080px;margin:0 auto;padding:24px}h1{font-size:24px;margin:0 0 18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
 section{background:white;border:1px solid #dde2e7;border-radius:8px;padding:18px}section h2{margin:0 0 16px;font-size:22px}.block{border-top:1px solid #edf0f2;padding-top:14px;margin-top:14px}.block:first-of-type{border-top:0;padding-top:0;margin-top:0}.block-title{font-size:14px;font-weight:700;color:#1f2933;margin:0 0 8px}
@@ -1739,7 +1739,7 @@ table{width:100%;border-collapse:collapse;margin-top:10px}
 td,th{border-bottom:1px solid #edf0f2;text-align:left;padding:8px;font-size:13px}
 pre{white-space:pre-wrap;background:#101820;color:#d9e2ec;border-radius:8px;padding:12px;min-height:80px;max-height:260px;overflow:auto}
 @media(max-width:760px){.grid,.fieldrow,.formgrid{grid-template-columns:1fr}main{padding:14px}.fieldrow button{margin-top:0}}
-</style></head><body><main><h1>PrintSphere Lite 配置工具</h1><p class="muted">${urlLine}　版本：${BACKEND_VERSION}</p>
+</style></head><body><main><h1>PrintSphere Lite Plus 配置工具</h1><p class="muted">${urlLine}　版本：${BACKEND_VERSION}</p>
 <div class="steps">
 <div id="stepCloud" class="step"><b>1. Bambu 云服务登录</b><span>先获取账号 token</span></div>
 <div id="stepWifi" class="step"><b>2. 配置 ESP WiFi</b><span>写入并检测 ESP</span></div>
