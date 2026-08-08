@@ -20,17 +20,15 @@ BearSSL::WiFiClientSecure mqttNet;
 
 const char *FIRMWARE_VERSION = "firmware-v0.4.90-ams&webcfg";
 
-// Color definitions for BGR565 display panel ((B<<11) | (G<<5) | R)
 #define BG_BLACK 0x0000
-#define C_RING 0x07E0   // Visual Green
+#define C_RING 0x07E0
 #define C_TRACK 0x2104
-#define C_TEXT 0xFFFF   // Visual White
-#define C_DIM 0x8410    // Visual Dim Gray
-#define C_CYAN 0xFFE0   // Visual Cyan
-#define C_ORANGE 0x061F // Visual Orange
-#define C_YELLOW 0x07FF // Visual Yellow
-#define C_BLUE 0xF800   // Visual Blue
-#define C_RED 0x001F    // Visual Red
+#define C_TEXT 0xFFFF
+#define C_DIM 0x8410
+#define C_CYAN 0x07FF
+#define C_ORANGE 0xFD20
+#define C_BLUE 0x5D1F
+#define C_RED 0xF800
 #define C_PANEL 0x3B6D
 #define C_PANEL2 0x2A6B
 #define C_PANEL3 0x4C10
@@ -143,8 +141,8 @@ struct PrinterState {
   bool online = true;
   bool dualNozzle = false;
   int activeTray = -1;
-  int spdLvl = -1;
-  int spdMag = -1;
+  int spdLvl = 1;
+  int spdMag = 100;
   AmsTrayInfo amsSlots[4];
 };
 
@@ -878,7 +876,7 @@ String espHomeHtml() {
         "fill='%23ffffff'/%3E%3Cpolygon points='53,13 87,13 87,55 53,39' "
         "fill='%23ffffff'/%3E%3Cpolygon points='53,45 87,61 87,107 53,107' "
         "fill='%23ffffff'/%3E%3C/svg%3E\">");
-  body += F("<title>PrintSphere Lite Plus</title><style>");
+  body += F("<title>PrintSphere Lite</title><style>");
   body += F("*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-"
             "system,BlinkMacSystemFont,\"SF Pro Display\",\"SF Pro "
             "Text\",\"Segoe UI\",Roboto,sans-serif}");
@@ -997,7 +995,7 @@ String espHomeHtml() {
   body += F("</style></head><body><div class=\"container\">");
 
   body += F(
-      "<div class=\"header\"><h1>PrintSphere Lite Plus</h1><p class=\"sub\">固件: ");
+      "<div class=\"header\"><h1>PrintSphere Lite</h1><p class=\"sub\">固件: ");
   body += FIRMWARE_VERSION;
   body += F(" | IP: ");
   body += htmlEscape(ip);
@@ -2757,7 +2755,7 @@ uint16_t filamentColor(uint32_t argb) {
   uint8_t r = (argb >> 24) & 0xFF;
   uint8_t g = (argb >> 16) & 0xFF;
   uint8_t b = (argb >> 8) & 0xFF;
-  return ((b >> 3) << 11) | ((g >> 2) << 5) | (r >> 3);
+  return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
 
 void drawDashboardBase() {
@@ -2882,28 +2880,25 @@ void drawDashboardFields() {
     }
 
     // Right Lower: Speed Profile (Option 1)
-    uint16_t spdColor = C_DIM;
-    String spdStr = "----";
+    uint16_t spdColor = C_CYAN;
+    String spdStr = "Std 100%";
     if (pr.spdLvl == 1) {
-      spdColor = C_RING; // Green for Silent
+      spdColor = 0x07E0; // Green for Silent
       spdStr =
           String("Silent ") + (pr.spdMag > 0 ? String(pr.spdMag) + "%" : "50%");
     } else if (pr.spdLvl == 3) {
-      spdColor = C_ORANGE; // Orange for Sport
+      spdColor = 0xFD20; // Orange for Sport
       spdStr =
           String("Sport ") + (pr.spdMag > 0 ? String(pr.spdMag) + "%" : "124%");
     } else if (pr.spdLvl == 4) {
-      spdColor = C_RED; // Red for Ludicrous
+      spdColor = 0xF800; // Red for Ludicrous
       spdStr = String("Ludicrous ") +
                (pr.spdMag > 0 ? String(pr.spdMag) + "%" : "166%");
-    } else if (pr.spdLvl == 2) {
-      // spdLvl == 2 (Standard)
+    } else {
+      // spdLvl == 2 (Standard) or unknown
       spdColor = C_CYAN; // Cyan for Standard
       spdStr =
           String("Std ") + (pr.spdMag > 0 ? String(pr.spdMag) + "%" : "100%");
-    } else {
-      spdColor = C_DIM;
-      spdStr = "----";
     }
 
     tft.setTextDatum(TR_DATUM);
@@ -2962,9 +2957,6 @@ void drawDashboardFields() {
         // Active indicator triangle at top center of slot card
         tft.fillTriangle(slotX + 19, 100, slotX + 25, 100, slotX + 22, 103,
                          C_RING);
-      } else {
-        // Clear active indicator triangle above top border when slot is no longer active
-        tft.fillRect(slotX + 18, 99, 9, 3, C_CARD);
       }
 
       if (slot.valid) {
@@ -3053,7 +3045,7 @@ void drawDashboardFields() {
     // Nozzle
     tft.setTextColor(C_DIM, C_CARD);
     tft.drawString("NOZ", 20, 166);
-    tft.setTextColor(nozzleV >= 0 ? C_YELLOW : C_DIM, C_CARD);
+    tft.setTextColor(nozzleV >= 0 ? C_RED : C_DIM, C_CARD);
     char nb[12];
     if (nozzleV >= 0)
       snprintf(nb, sizeof(nb), "%dC", nozzleV);
