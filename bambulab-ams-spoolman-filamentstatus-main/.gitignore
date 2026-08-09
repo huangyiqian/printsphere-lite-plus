@@ -1,7 +1,0 @@
-.DS_Store
-.env
-.settings
-.project
-logs
-node_modules
-printers
