@@ -31,3 +31,9 @@ release/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# Local backup files (kept locally, excluded from git upload)
+*.bak
+*.bak.*
+*.tmp
+*.b64
