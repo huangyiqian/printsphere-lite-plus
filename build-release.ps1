@@ -36,8 +36,16 @@ $fileOpenCompanion = CnName @(0x6253, 0x5F00, 0x914D, 0x7F6E, 0x5DE5, 0x5177) ".
 $fileOneClickFlash = CnName @(0x4E00, 0x952E, 0x5237, 0x5165, 0x56FA, 0x4EF6) ".bat"
 
 $sourceFirmwareDir = Join-CnPath $root $nameFirmware
+$sourceCompanionDir = Join-CnPath $root $nameCompanion
 $sourceFlasherDir = Join-CnPath $root $nameFlasher
+
+$compiledBin = Join-Path $root ".pio\build\sd2\firmware.bin"
 $firmware = Join-Path $sourceFirmwareDir "printsphere-lite-esp8266.bin"
+
+if (Test-Path -LiteralPath $compiledBin) {
+  Copy-Item -LiteralPath $compiledBin -Destination $firmware -Force
+  Write-Host "Updated firmware bin from compilation output."
+}
 
 if (-not (Test-Path -LiteralPath $firmware)) {
   throw "Missing firmware: $firmware"
@@ -61,12 +69,12 @@ New-Item -ItemType Directory -Force -Path `
 Copy-Required $firmware (Join-Path $firmwareOut "printsphere-lite-esp8266.bin")
 Copy-Required (Join-Path $root "README.md") (Join-CnPath $out $nameReadme ".md")
 
-Copy-Required (Join-Path $root "companion\$fileOpenCompanion") (Join-Path $companionOut $fileOpenCompanion)
-Copy-Required (Join-Path $root "companion\server.js") (Join-Path $companionOut "server.js")
-Copy-Required (Join-Path $root "companion\package.json") (Join-Path $companionOut "package.json")
-Copy-Required (Join-Path $root "companion\README.md") (Join-Path $companionOut "README.md")
-Copy-Required (Join-Path $root "companion\VERSIONS.md") (Join-Path $companionOut "VERSIONS.md")
-Copy-Optional (Join-Path $root "companion\node\node.exe") (Join-Path $companionOut "node\node.exe")
+Copy-Required (Join-Path $sourceCompanionDir $fileOpenCompanion) (Join-Path $companionOut $fileOpenCompanion)
+Copy-Required (Join-Path $sourceCompanionDir "server.js") (Join-Path $companionOut "server.js")
+Copy-Required (Join-Path $sourceCompanionDir "package.json") (Join-Path $companionOut "package.json")
+Copy-Required (Join-Path $sourceCompanionDir "README.md") (Join-Path $companionOut "README.md")
+Copy-Required (Join-Path $sourceCompanionDir "VERSIONS.md") (Join-Path $companionOut "VERSIONS.md")
+Copy-Optional (Join-Path $sourceCompanionDir "node\node.exe") (Join-Path $companionOut "node\node.exe")
 
 Copy-Required (Join-Path $sourceFlasherDir $fileOneClickFlash) (Join-Path $flasherOut $fileOneClickFlash)
 Copy-Required (Join-Path $sourceFlasherDir "flash-firmware.ps1") (Join-Path $flasherOut "flash-firmware.ps1")
@@ -76,9 +84,12 @@ Copy-Optional (Join-Path (Join-CnPath $sourceFlasherDir $nameDriver) "CH341SER.E
 
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip -Force
 
+$desktopZip = "C:\Users\huangyiqian\Desktop\PrintSphere_Lite_v0.4.90-ams_webcfg.zip"
+Copy-Item -LiteralPath $zip -Destination $desktopZip -Force
+
 Write-Host ""
-Write-Host "Release package created:"
-Write-Host $out
-Write-Host $zip
+Write-Host "Release package created successfully!"
+Write-Host "Project Release Zip: $zip"
+Write-Host "Desktop Release Zip: $desktopZip"
 Write-Host ""
-Write-Host "Runtime private data under companion/data was not copied."
+Write-Host "Runtime private data under 后端配置工具/data was not included."
