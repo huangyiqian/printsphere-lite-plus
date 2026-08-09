@@ -17,6 +17,7 @@ data/*
 # Bundled runtimes and binary helper tools are shipped in release packages,
 # but they should not be committed to the source repository.
 companion/node/
+后端配置工具/node/
 刷固件工具/tools/*.exe
 刷固件工具/驱动/*.exe
 刷固件工具/驱动/*.EXE
