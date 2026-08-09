@@ -6,6 +6,8 @@
 .vscode/
 
 # Runtime data and private customer configuration
+后端配置工具/data/*
+!后端配置工具/data/.gitignore
 companion/data/*
 !companion/data/.gitignore
 data/*

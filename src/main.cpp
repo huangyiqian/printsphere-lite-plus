@@ -22,7 +22,7 @@ const char *FIRMWARE_VERSION = "firmware-v0.4.90-ams&webcfg";
 
 // Color definitions for BGR565 display panel ((B<<11) | (G<<5) | R)
 #define BG_BLACK 0x0000
-#define C_RING 0x07E0   // Visual Green
+#define C_RING 0x07E0 // Visual Green
 #define C_TRACK 0x2104
 #define C_TEXT 0xFFFF   // Visual White
 #define C_DIM 0x8410    // Visual Dim Gray
@@ -996,8 +996,8 @@ String espHomeHtml() {
   body += F(".toast.show{opacity:1}");
   body += F("</style></head><body><div class=\"container\">");
 
-  body += F(
-      "<div class=\"header\"><h1>PrintSphere Lite Plus</h1><p class=\"sub\">固件: ");
+  body += F("<div class=\"header\"><h1>PrintSphere Lite Plus</h1><p "
+            "class=\"sub\">固件: ");
   body += FIRMWARE_VERSION;
   body += F(" | IP: ");
   body += htmlEscape(ip);
@@ -2963,7 +2963,8 @@ void drawDashboardFields() {
         tft.fillTriangle(slotX + 19, 100, slotX + 25, 100, slotX + 22, 103,
                          C_RING);
       } else {
-        // Clear active indicator triangle above top border when slot is no longer active
+        // Clear active indicator triangle above top border when slot is no
+        // longer active
         tft.fillRect(slotX + 18, 99, 9, 3, C_CARD);
       }
 
