@@ -32,6 +32,19 @@
 
 ---
 
+## 🖼️ 界面与实机效果预览
+
+| 信息面板布局 (Dashboard + AMS) | 时钟待机布局 (Clock) |
+| :---: | :---: |
+| <img src="docs/images/dashboard-layout.jpg" width="340" /> | <img src="docs/images/clock-layout.jpg" width="340" /> |
+
+### Web 后端配置界面
+<p align="center">
+  <img src="docs/images/web-ui-preview.png" width="680" />
+</p>
+
+---
+
 ## 🏷️ 版本号信息
 
 * **固件版本 (Firmware)**：`v0.4.90-ams&webcfg`
