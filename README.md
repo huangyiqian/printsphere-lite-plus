@@ -1,130 +1,96 @@
-# PrintSphere Lite
+# PrintSphere Lite Plus (Fork 版本)
 
-PrintSphere Lite 是一款基于 ESP8266EX 和 240x240 ST7789 屏幕的 Bambu 打印状态显示设备。
+![Version](https://img.shields.io/badge/Firmware-v0.4.90--ams%26webcfg-brightgreen)
+![Backend Version](https://img.shields.io/badge/WebUI_Backend-v0.4.71--ui--clean-blue)
+![License](https://img.shields.io/badge/License-Non--Commercial-orange)
 
-设备通过 WiFi 连接 Bambu 云 MQTT，实时显示打印机状态。配置完成后，ESP 会独立联网刷新数据，电脑端工具只在首次配置、重新登录账号、切换打印机或更新配置时使用。
+本项目为原版 [PrintSphere Lite](https://github.com/ccord34/printsphere-lite) 的增强改进版本（Fork）。基于 ESP8266EX 与 240x240 ST7789 屏幕，专为 Bambu Lab（拓竹）3D 打印机打造的桌面打印状态与 AMS 耗材监控小电视。
 
-## 功能
+---
 
-- 显示打印机名称、打印状态、进度百分比和边框进度条
-- 显示喷嘴温度、热床温度、当前层数、总层数和剩余时间
-- 新增信息面板布局，可在同一屏展示进度、状态、喷嘴/双喷嘴温度、热床温度、仓温、剩余时间和预估完成时间
-- 支持单喷嘴和常见双喷嘴机型字段兼容
-- 支持 A1 / A1 mini、P1P / P1S、P2S、H2 系列、X1 系列、X2D 等 Bambu 机型的常见云端字段
-- 支持 0-100 屏幕亮度自由调节
-- 支持 USB 串口配置，ESP 局域网页面可切换已同步打印机
-- 支持一台 Bambu 账号配置多台 ESP，建议一次只连接一台 ESP 进行配置
+## 📌 Fork 版本具体改动与新特性
 
-## 本次更新
+### 1. 🌈 AMS（拓竹多色系统）显示支持
+* **多色耗材渲染**：全面支持 Bambu AMS 槽位状态实时解析，准确识别每个槽位的耗材颜色、材质类型与加载状态。
+* **BGR565 颜色校正**：针对 ST7789 屏幕算法重新校正 RGB/BGR565 颜色编码，实现逼真的耗材色彩显示。
+* **智能清除机制**：打印结束、取消或处于空闲状态时，自动清理 AMS 及打印速率指示，流畅切回待机/时钟界面。
 
-本次版本增加了一种新的“信息面板布局”，可以在 240x240 屏幕上展示更多打印信息，适合需要同时查看进度、温度、仓温和预计完成时间的场景。
+### 2. 📊 屏幕 UI 与显示布局优化
+* **信息面板 (Dashboard) 重写**：采用 2x2 精简数据卡布局，同时展示打印进度、喷嘴温度、热床温度、仓温以及估计剩余完成时间。
+* **双喷嘴与多机型兼容**：针对 A1/A1 mini、P1P/P1S、P2S、X1C、X2D、H2 系列等不同机型优化温度与双喷嘴切换显示，避免长数值或多喷嘴文本遮挡。
+* **屏幕背光控制**：支持 0-100% 自由亮度滑块调节，无有效任务 5 分钟后可自动进入低功耗降亮状态。
 
-![信息面板布局效果图](docs/images/dashboard-layout.png)
+### 3. 🌐 Web 配置工具 (WebUI Backend) 升级
+* **纯净紧凑界面**：全新设计的 Web 配置页，响应迅速、减少空白堆叠；支持按 WiFi 扫描配置、打印机切换、屏幕布局选择进行分组控制。
+* **多设备档案管理**：单个 Bambu 云账号支持管理多台 ESP 硬件，系统按 MAC 地址与 Chip ID 自动隔离与保存各台设备的专属配置。
+* **USB 串口优先**：所有配置写入优先走 USB 串口传输，HTTP 局域网传输作为兜底，解决多台设备同时在网时的误写问题。
 
-## 硬件
+### 4. 🧹 仓库代码库优化与安全脱敏
+* **敏感隐私自动屏蔽**：更新 `.gitignore` 规则，将包含 WiFi 密码、Bambu 云 Token、打印机 Access Code 的配置文件（`config.json` 等）自动忽略，防止隐私泄露。
+* **本地备份隔离**：本地支持保留开发与历史备份文件（`*.bak`），但自动拦截上云，保持 GitHub 代码库纯净轻量。
+* **源码瘦身**：剔除冗余的大文件及中间调试脚本，极大地提升了克隆与推送速度。
 
-- ESP8266EX / NodeMCU 兼容模块
-- CH340/CH341 USB 串口模块
-- 240x240 ST7789 屏幕
+---
 
-当前固件是按本项目使用的 SD2 硬件接线适配的。其他硬件需要检查 `platformio.ini` 和 `include/User_Setup.h` 中的屏幕引脚。
+## 🏷️ 版本号信息
 
-## 外壳 3D 模型
+* **固件版本 (Firmware)**：`v0.4.90-ams&webcfg`
+* **后端配置工具 (Backend WebUI)**：`v0.4.71-ui-clean`
 
-- 中国大陆地区：[MakerWorld 中国大陆模型页](https://makerworld.com.cn/models/2587841?appSharePlatform=copy)
-- 海外地区：[MakerWorld 国际模型页](https://makerworld.com/models/2891359?appSharePlatform=copy)
+---
 
-## 目录结构
-
-```text
-src/              ESP8266 固件源码
-include/          TFT_eSPI 屏幕配置
-companion/        Windows 电脑端配置工具源码
-固件/             最新发布固件 bin
-刷固件工具/       一键刷固件脚本
-platformio.ini    PlatformIO 构建配置
-build-release.bat  生成 Release 交付包
-```
-
-## 使用方式
-
-如果从 GitHub 下载，请进入 [Releases](https://github.com/ccord34/printsphere-lite/releases) 页面，下载名称包含“完整交付包”的 `.zip` 文件。不要下载 GitHub 自动生成的 `Source code` 压缩包，源码包不包含 Windows 后端运行环境、烧录工具和驱动。
-
-1. 将 ESP 通过 USB 连接到 Windows 电脑。
-2. 打开发布包里的 `后端配置工具\打开配置工具.bat`。
-3. 登录 Bambu 云服务账号。
-4. 选择或手动输入 2.4G WiFi，并填写 WiFi 密码。
-5. 点击“保存并配置 ESP WiFi”。
-6. 刷新打印机列表，选择需要显示的打印机。
-7. 点击“显示这台并同步”。
-8. 屏幕开始显示打印状态后，可以断开电脑 USB，改用普通 USB 电源供电。
-
-设备连接 WiFi 后，也可以访问 ESP 的本地页面：
+## 📁 目录结构
 
 ```text
-http://ESP的IP地址:8081/
+src/              ESP8266 固件核心 C++ 源码 (main.cpp, config.h)
+include/          TFT_eSPI 屏幕驱动引脚配置
+后端配置工具/     Windows Web 配置工具 (server.js, 打开配置工具.bat)
+固件/             预编译好的 printsphere-lite-esp8266.bin
+刷固件工具/       Windows 平台一键烧录工具与 USB 串口驱动
+docs/             设计说明与相关文档
+platformio.ini    PlatformIO 项目构建配置文件
+build-release.ps1 生成完整发布包脚本
 ```
 
-电脑端工具同步过打印机列表后，ESP 本地页面可以在电脑关闭时切换已同步的打印机。
+---
 
-## 开发构建
+## 🛠️ 硬件需求与引脚连接
 
-安装 PlatformIO 后执行：
+* **主控**：ESP8266EX / NodeMCU 兼容开发板
+* **屏幕**：240x240 7针 ST7789 SPI 显示屏
+* **接线参考 (PlatformIO 默认)**：
+  * `CS`: GPIO 15
+  * `DC`: GPIO 0
+  * `RST`: GPIO 2
+  * `BL`: GPIO 5 (PWM 背光控制)
 
-```powershell
+---
+
+## 🚀 快速上手使用
+
+1. 使用 USB 线将 ESP8266 连接到 Windows 电脑。
+2. 打开 `后端配置工具\打开配置工具.bat`，在自动打开的浏览器页面中登录 Bambu Lab 账号。
+3. 选择或填写 2.4G WiFi 名称与密码，点击 **“保存并配置 ESP WiFi”**。
+4. 刷新打印机列表，选中你的拓竹打印机并点击 **“显示这台并同步”**。
+5. ESP8266 屏幕出现数据后即可拔下电脑 USB，改用任意 5V USB 供电使用。
+6. 设备连上 WiFi 后，也可以通过浏览器直接访问 `http://[ESP的局域网IP]:8081/` 进行轻量无线管理。
+
+---
+
+## 💻 编译与构建
+
+项目基于 [PlatformIO](https://platformio.org/) 构建，如需修改源码并自行编译：
+
+```bash
+# 编译 ESP8266 固件
 platformio run -e sd2
 ```
 
-生成的固件位于：
+编译产物路径：`.pio/build/sd2/firmware.bin`
 
-```text
-.pio/build/sd2/firmware.bin
-```
+---
 
-发布前请复制最新固件到：
+## 📄 License 与致谢
 
-```text
-固件/printsphere-lite-esp8266.bin
-```
-
-## 后端配置工具
-
-后端使用 Node.js 内置模块实现，无需 npm install。
-
-开发时可以运行：
-
-```powershell
-node companion/server.js 8795
-```
-
-发布包中可以放入 `companion/node/node.exe`，这样客户电脑无需单独安装 Node.js。源码仓库默认不提交 `companion/node/`。
-
-## 隐私和发布检查
-
-不要提交客户或测试运行数据：
-
-```text
-companion/data/config.json
-companion/data/devices.json
-companion/data/device-history.jsonl
-companion/data/server-state.json
-```
-
-这些文件可能包含 WiFi 名称、WiFi 密码、Bambu token、打印机序列号、设备 IP 或设备名。`.gitignore` 已默认排除。
-
-发布前建议执行：
-
-```powershell
-rg -n -i "token|access_token|refresh_token|wifi_password|ssid|password|serial|dev_id|192\.168|COM7|COM11"
-```
-
-如果命中真实账号、真实 WiFi、真实 token 或真实设备名，必须先删除或脱敏。
-
-## License
-
-This project is source-available for personal, educational, research, and
-non-commercial use only. Commercial use, resale, production batches, paid
-service integration, or customer delivery packages require separate written
-authorization.
-
-See [LICENSE](LICENSE) for details.
+* 本项目基于 [ccord34/printsphere-lite](https://github.com/ccord34/printsphere-lite) 原项目进行修改和增强。
+* 本项目仅供个人学习、交流及非商业用途使用。商业使用、批量生产或集成付费服务需获得原作者授权。详细声明见 [LICENSE](LICENSE)。
