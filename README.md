@@ -32,14 +32,6 @@
 
 ---
 
-## 🖼️ 界面效果预览
-
-| 新版信息面板布局 (Dashboard + AMS) | 时钟待机布局 (Clock) |
-| :---: | :---: |
-| ![Dashboard 预览](docs/images/dashboard-preview.png) | ![Clock 预览](docs/images/clock-preview.png) |
-
----
-
 ## 🏷️ 版本号信息
 
 * **固件版本 (Firmware)**：`v0.4.90-ams&webcfg`
