@@ -1,6 +1,6 @@
 # PrintSphere Lite Plus (Fork 版本)
 
-![Version](https://img.shields.io/badge/Firmware-v0.4.90--ams%26webcfg-brightgreen)
+![Version](https://img.shields.io/badge/Firmware-v0.4.95extfix-brightgreen)
 ![Backend Version](https://img.shields.io/badge/WebUI_Backend-v0.4.71--ui--clean-blue)
 ![License](https://img.shields.io/badge/License-Non--Commercial-orange)
 
@@ -52,7 +52,7 @@
 
 ## 🏷️ 版本号信息
 
-* **固件版本 (Firmware)**：`v0.4.90-ams&webcfg`
+* **固件版本 (Firmware)**：`v0.4.95extfix`
 * **后端配置工具 (Backend WebUI)**：`v0.4.71-ui-clean`
 
 ---

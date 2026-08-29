@@ -84,7 +84,7 @@ Copy-Optional (Join-Path (Join-CnPath $sourceFlasherDir $nameDriver) "CH341SER.E
 
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip -Force
 
-$desktopZip = "C:\Users\huangyiqian\Desktop\PrintSphere_Lite_v0.4.90-ams_webcfg.zip"
+$desktopZip = "C:\Users\huangyiqian\Desktop\PrintSphere_Lite_v0.4.95extfix.zip"
 Copy-Item -LiteralPath $zip -Destination $desktopZip -Force
 
 Write-Host ""

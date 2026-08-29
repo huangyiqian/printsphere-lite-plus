@@ -18,7 +18,7 @@ BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
 
-const char *FIRMWARE_VERSION = "firmware-v0.4.90-ams&webcfg";
+const char *FIRMWARE_VERSION = "firmware-v0.4.95extfix";
 
 // Color definitions for BGR565 display panel ((B<<11) | (G<<5) | R)
 #define BG_BLACK 0x0000
