@@ -37,3 +37,7 @@ desktop.ini
 *.bak.*
 *.tmp
 *.b64
+*copy*
+* copy*
+compile_commands.json
+.clangd/

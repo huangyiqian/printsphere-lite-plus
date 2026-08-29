@@ -123,8 +123,21 @@ struct AmsTrayInfo {
   int remain = -1;
   String trayType = "";
   String traySubBrands = "";
+  String tagUid = "";
+  bool isOfficial = false;
   bool valid = false;
 };
+
+bool isOfficialTag(const char *tag) {
+  if (!tag || strlen(tag) == 0)
+    return false;
+  for (size_t i = 0; tag[i] != '\0'; i++) {
+    if (tag[i] != '0' && tag[i] != ' ' && tag[i] != '\r' && tag[i] != '\n') {
+      return true;
+    }
+  }
+  return false;
+}
 
 struct PrinterState {
   float progress = -1;
@@ -145,7 +158,9 @@ struct PrinterState {
   int activeTray = -1;
   int spdLvl = -1;
   int spdMag = -1;
+  bool amsExist = false;
   AmsTrayInfo amsSlots[4];
+  AmsTrayInfo extSlot;
 };
 
 struct StoredConfig {
@@ -192,6 +207,7 @@ struct RenderCache {
   String layout = "";
   int activeTray = -999;
   uint32_t amsHash = 0;
+  bool amsExist = false;
   int dashTimeRemaining = -999;
   String dashStatus = "";
   int spdLvl = -999;
@@ -516,12 +532,22 @@ void resetLivePrintFields() {
   pr.activeTray = -1;
   pr.spdLvl = 1;
   pr.spdMag = 100;
+  pr.amsExist = false;
+  pr.extSlot.valid = false;
+  pr.extSlot.trayColor = 0;
+  pr.extSlot.remain = -1;
+  pr.extSlot.trayType = "";
+  pr.extSlot.traySubBrands = "";
+  pr.extSlot.tagUid = "";
+  pr.extSlot.isOfficial = false;
   for (int i = 0; i < 4; i++) {
     pr.amsSlots[i].valid = false;
     pr.amsSlots[i].trayColor = 0;
     pr.amsSlots[i].remain = -1;
     pr.amsSlots[i].trayType = "";
     pr.amsSlots[i].traySubBrands = "";
+    pr.amsSlots[i].tagUid = "";
+    pr.amsSlots[i].isOfficial = false;
   }
   printerStatusReceived = false;
   displayDirty = true;
@@ -1933,6 +1959,23 @@ void applyPrint(JsonObject print) {
   if (i != -999)
     pr.totalLayers = i;
 
+  // Check AMS presence via ams_exist_bits
+  if (!print["ams_exist_bits"].isNull()) {
+    const char *bits = print["ams_exist_bits"];
+    if (bits) {
+      pr.amsExist = (atoi(bits) > 0);
+    } else {
+      pr.amsExist = (print["ams_exist_bits"].as<int>() > 0);
+    }
+  } else if (!print["ams"]["ams_exist_bits"].isNull()) {
+    const char *bits = print["ams"]["ams_exist_bits"];
+    if (bits) {
+      pr.amsExist = (atoi(bits) > 0);
+    } else {
+      pr.amsExist = (print["ams"]["ams_exist_bits"].as<int>() > 0);
+    }
+  }
+
   // Parse AMS tray data
   JsonObject amsObj = print["ams"];
   if (!amsObj.isNull()) {
@@ -1944,32 +1987,92 @@ void applyPrint(JsonObject print) {
         pr.activeTray = amsObj["tray_now"] | -1;
     }
     JsonArray amsArray = amsObj["ams"];
-    if (!amsArray.isNull() && amsArray.size() > 0) {
-      JsonObject firstAms = amsArray[0];
-      JsonArray trays = firstAms["tray"];
-      if (!trays.isNull()) {
-        int count = min((int)trays.size(), 4);
-        for (int k = 0; k < count; k++) {
-          JsonObject tray = trays[k];
-          const char *tt = tray["tray_type"];
-          if (tt && strlen(tt) > 0) {
-            pr.amsSlots[k].valid = true;
-            pr.amsSlots[k].trayType = tt;
-            pr.amsSlots[k].traySubBrands = tray["tray_sub_brands"] | "";
-            const char *tc = tray["tray_color"];
-            if (tc && strlen(tc) >= 8) {
-              pr.amsSlots[k].trayColor = strtoul(tc, nullptr, 16);
-            } else if (tc && strlen(tc) >= 6) {
-              pr.amsSlots[k].trayColor = strtoul(tc, nullptr, 16) << 8;
+    if (!amsArray.isNull()) {
+      if (amsArray.size() > 0) {
+        pr.amsExist = true;
+        JsonObject firstAms = amsArray[0];
+        JsonArray trays = firstAms["tray"];
+        if (!trays.isNull()) {
+          int count = min((int)trays.size(), 4);
+          for (int k = 0; k < count; k++) {
+            JsonObject tray = trays[k];
+            const char *tt = tray["tray_type"];
+            if (tt && strlen(tt) > 0) {
+              pr.amsSlots[k].valid = true;
+              pr.amsSlots[k].trayType = tt;
+              pr.amsSlots[k].traySubBrands = tray["tray_sub_brands"] | "";
+              const char *tag = tray["tag_uid"];
+              pr.amsSlots[k].tagUid = tag ? tag : "";
+              pr.amsSlots[k].isOfficial = isOfficialTag(tag);
+              const char *tc = tray["tray_color"];
+              if (tc && strlen(tc) >= 8) {
+                pr.amsSlots[k].trayColor = strtoul(tc, nullptr, 16);
+              } else if (tc && strlen(tc) >= 6) {
+                pr.amsSlots[k].trayColor = strtoul(tc, nullptr, 16) << 8;
+              }
+              pr.amsSlots[k].remain = tray["remain"] | -1;
+            } else {
+              pr.amsSlots[k].valid = false;
+              pr.amsSlots[k].isOfficial = false;
+              pr.amsSlots[k].tagUid = "";
             }
-            pr.amsSlots[k].remain = tray["remain"] | -1;
-          } else {
-            pr.amsSlots[k].valid = false;
           }
         }
+      } else {
+        pr.amsExist = false;
       }
     }
   }
+
+  // Parse External Spool / Virtual Tray (vt_tray) data
+  JsonObject vtObj = print["vt_tray"];
+  if (vtObj.isNull() && !amsObj.isNull()) {
+    vtObj = amsObj["vt_tray"];
+  }
+  if (!vtObj.isNull()) {
+    const char *tt = vtObj["tray_type"];
+    if (tt && strlen(tt) > 0) {
+      pr.extSlot.valid = true;
+      pr.extSlot.trayType = tt;
+      pr.extSlot.traySubBrands = vtObj["tray_sub_brands"] | "";
+      const char *tag = vtObj["tag_uid"];
+      pr.extSlot.tagUid = tag ? tag : "";
+      pr.extSlot.isOfficial = isOfficialTag(tag);
+      const char *tc = vtObj["tray_color"];
+      if (tc && strlen(tc) >= 8) {
+        pr.extSlot.trayColor = strtoul(tc, nullptr, 16);
+      } else if (tc && strlen(tc) >= 6) {
+        pr.extSlot.trayColor = strtoul(tc, nullptr, 16) << 8;
+      }
+      pr.extSlot.remain = vtObj["remain"] | -1;
+    }
+  }
+  if (!print["tray_type"].isNull() || !print["filament_type"].isNull()) {
+    const char *tt = print["tray_type"];
+    if (!tt || strlen(tt) == 0)
+      tt = print["filament_type"];
+    if (tt && strlen(tt) > 0) {
+      pr.extSlot.valid = true;
+      pr.extSlot.trayType = tt;
+      if (!print["tray_sub_brands"].isNull())
+        pr.extSlot.traySubBrands = print["tray_sub_brands"].as<const char *>();
+      if (!print["tag_uid"].isNull()) {
+        const char *tag = print["tag_uid"];
+        pr.extSlot.tagUid = tag ? tag : "";
+        pr.extSlot.isOfficial = isOfficialTag(tag);
+      }
+      const char *tc = print["tray_color"];
+      if (tc && strlen(tc) >= 8) {
+        pr.extSlot.trayColor = strtoul(tc, nullptr, 16);
+      } else if (tc && strlen(tc) >= 6) {
+        pr.extSlot.trayColor = strtoul(tc, nullptr, 16) << 8;
+      }
+      if (!print["remain"].isNull()) {
+        pr.extSlot.remain = print["remain"] | -1;
+      }
+    }
+  }
+
   if (!print["subtray_id"].isNull()) {
     pr.activeTray = print["subtray_id"] | pr.activeTray;
   } else if (!print["tray_now"].isNull()) {
@@ -2058,11 +2161,30 @@ void applyExtruderFromRawPayload(uint8_t *payload, size_t length) {
 
 void parseMqttPayload(uint8_t *payload, size_t length) {
   JsonDocument filter;
+  filter["print"]["ams_exist_bits"] = true;
+  filter["print"]["ams"]["ams_exist_bits"] = true;
   filter["print"]["ams"]["ams"][0]["tray"][0]["tray_type"] = true;
   filter["print"]["ams"]["ams"][0]["tray"][0]["tray_sub_brands"] = true;
   filter["print"]["ams"]["ams"][0]["tray"][0]["tray_color"] = true;
   filter["print"]["ams"]["ams"][0]["tray"][0]["remain"] = true;
+  filter["print"]["ams"]["ams"][0]["tray"][0]["tag_uid"] = true;
   filter["print"]["ams"]["tray_now"] = true;
+  filter["print"]["ams"]["vt_tray"]["tray_type"] = true;
+  filter["print"]["ams"]["vt_tray"]["tray_sub_brands"] = true;
+  filter["print"]["ams"]["vt_tray"]["tray_color"] = true;
+  filter["print"]["ams"]["vt_tray"]["remain"] = true;
+  filter["print"]["ams"]["vt_tray"]["tag_uid"] = true;
+  filter["print"]["vt_tray"]["tray_type"] = true;
+  filter["print"]["vt_tray"]["tray_sub_brands"] = true;
+  filter["print"]["vt_tray"]["tray_color"] = true;
+  filter["print"]["vt_tray"]["remain"] = true;
+  filter["print"]["vt_tray"]["tag_uid"] = true;
+  filter["print"]["tag_uid"] = true;
+  filter["print"]["tray_type"] = true;
+  filter["print"]["tray_sub_brands"] = true;
+  filter["print"]["tray_color"] = true;
+  filter["print"]["filament_type"] = true;
+  filter["print"]["remain"] = true;
   filter["print"]["tray_now"] = true;
   filter["print"]["subtray_id"] = true;
   filter["print"]["spd_lvl"] = true;
@@ -2760,6 +2882,80 @@ uint16_t filamentColor(uint32_t argb) {
   return ((b >> 3) << 11) | ((g >> 2) << 5) | (r >> 3);
 }
 
+void drawDashboardSlotCard(int slotX, const AmsTrayInfo &slot, bool isActive,
+                           const char *slotLabel, const char *emptyLabel) {
+  // Card Background & Highlight Border
+  uint16_t bgCol = isActive ? 0x1A04 : C_CARD;
+  uint16_t borderCol = isActive ? C_RING : 0x294A;
+
+  tft.fillRoundRect(slotX, 102, 44, 46, 6, bgCol);
+  tft.drawRoundRect(slotX, 102, 44, 46, 6, borderCol);
+
+  if (isActive) {
+    // Active indicator triangle at top center of slot card
+    tft.fillTriangle(slotX + 19, 100, slotX + 25, 100, slotX + 22, 103,
+                     C_RING);
+  } else {
+    // Clear active indicator triangle above top border when slot is no longer active
+    tft.fillRect(slotX + 18, 99, 9, 3, C_CARD);
+  }
+
+  if (slot.valid) {
+    // Color Swatch
+    uint16_t col565 = filamentColor(slot.trayColor);
+    tft.fillRoundRect(slotX + 4, 106, 12, 12, 3, col565);
+    tft.drawRoundRect(slotX + 4, 106, 12, 12, 3, C_TEXT);
+
+    // Slot Number or "ext"
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(1);
+    tft.setTextColor(isActive ? C_RING : C_DIM, bgCol);
+    tft.drawString(slotLabel, slotX + 18, 107);
+
+    // Short Filament Type (e.g. PLA, PETG, ABS)
+    String shortType =
+        slot.traySubBrands.length() ? slot.traySubBrands : slot.trayType;
+    if (shortType.startsWith("PLA"))
+      shortType = "PLA";
+    else if (shortType.startsWith("ABS"))
+      shortType = "ABS";
+    else if (shortType.startsWith("PETG"))
+      shortType = "PETG";
+    else if (shortType.startsWith("TPU"))
+      shortType = "TPU";
+    else if (shortType.startsWith("PA"))
+      shortType = "PA";
+    else if (shortType.startsWith("PC"))
+      shortType = "PC";
+    else if (shortType.startsWith("ASA"))
+      shortType = "ASA";
+    else if (shortType.startsWith("Support"))
+      shortType = "SPT";
+    else if (shortType.length() > 5)
+      shortType = shortType.substring(0, 5);
+
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(1);
+    tft.setTextColor(C_TEXT, bgCol);
+    tft.drawString(shortType, slotX + 22, 124);
+
+    // Remaining capacity % (Only displayed for official Bambu filaments with RFID)
+    if (slot.isOfficial && slot.remain >= 0 && slot.remain <= 100) {
+      char rStr[8];
+      snprintf(rStr, sizeof(rStr), "%d%%", slot.remain);
+      tft.setTextColor(C_DIM, bgCol);
+      tft.drawString(rStr, slotX + 22, 137);
+    }
+  } else {
+    // Empty / Invalid Slot
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(1);
+    tft.setTextColor(C_DIM, bgCol);
+    tft.drawString(emptyLabel, slotX + 22, 118);
+    tft.drawString("--", slotX + 22, 132);
+  }
+}
+
 void drawDashboardBase() {
   tft.fillScreen(BG_BLACK);
   tft.drawRoundRect(4, 4, 232, 232, 8, 0x294A);
@@ -2800,6 +2996,7 @@ void drawDashboardBase() {
   cache.layout = "dashboard";
   cache.activeTray = -999;
   cache.amsHash = 0;
+  cache.amsExist = false;
   cache.dashTimeRemaining = -999;
   cache.dashStatus = "";
   cache.spdLvl = -999;
@@ -2935,100 +3132,57 @@ void drawDashboardFields() {
     cache.spdMag = pr.spdMag;
   }
 
-  // 3. AMS 4-Slot Tray Panel inside Hero Card (y: 102, h: 48)
+  // 3. AMS / Ext Tray Panel inside Hero Card (y: 102, h: 48)
   uint32_t _amsHash = 0;
-  for (int k = 0; k < 4; k++) {
-    if (pr.amsSlots[k].valid) {
-      _amsHash ^= pr.amsSlots[k].trayColor;
-      _amsHash ^= (uint32_t)((uint8_t)pr.amsSlots[k].remain) << (k * 8);
-      _amsHash ^= manualStringHash(pr.amsSlots[k].trayType) << 16;
+  if (pr.amsExist) {
+    _amsHash = 0xAA550000;
+    for (int k = 0; k < 4; k++) {
+      if (pr.amsSlots[k].valid) {
+        _amsHash ^= pr.amsSlots[k].trayColor;
+        _amsHash ^= (uint32_t)((uint8_t)pr.amsSlots[k].remain) << (k * 8);
+        _amsHash ^= manualStringHash(pr.amsSlots[k].trayType) << 16;
+        _amsHash ^= (pr.amsSlots[k].isOfficial ? 1 : 0) << (k + 8);
+      }
+    }
+  } else {
+    _amsHash = 0x55AA0000;
+    const AmsTrayInfo &ext = pr.extSlot.valid ? pr.extSlot : pr.amsSlots[0];
+    if (ext.valid) {
+      _amsHash ^= ext.trayColor;
+      _amsHash ^= (uint32_t)((uint8_t)ext.remain);
+      _amsHash ^= manualStringHash(ext.trayType) << 16;
+      _amsHash ^= (ext.isOfficial ? 1 : 0) << 8;
     }
   }
 
-  if (_amsHash != cache.amsHash || pr.activeTray != cache.activeTray) {
-    for (int k = 0; k < 4; k++) {
-      const AmsTrayInfo &slot = pr.amsSlots[k];
-      int slotX = 22 + k * 47;
-      bool isActive = (pr.activeTray == k);
-
-      // Card Background & Highlight Border
-      uint16_t bgCol = isActive ? 0x1A04 : C_CARD;
-      uint16_t borderCol = isActive ? C_RING : 0x294A;
-
-      tft.fillRoundRect(slotX, 102, 44, 46, 6, bgCol);
-      tft.drawRoundRect(slotX, 102, 44, 46, 6, borderCol);
-
-      if (isActive) {
-        // Active indicator triangle at top center of slot card
-        tft.fillTriangle(slotX + 19, 100, slotX + 25, 100, slotX + 22, 103,
-                         C_RING);
-      } else {
-        // Clear active indicator triangle above top border when slot is no
-        // longer active
-        tft.fillRect(slotX + 18, 99, 9, 3, C_CARD);
-      }
-
-      if (slot.valid) {
-        // Color Swatch
-        uint16_t col565 = filamentColor(slot.trayColor);
-        tft.fillRoundRect(slotX + 4, 106, 12, 12, 3, col565);
-        tft.drawRoundRect(slotX + 4, 106, 12, 12, 3, C_TEXT);
-
-        // Slot Number (1..4)
-        tft.setTextDatum(TL_DATUM);
-        tft.setTextFont(1);
-        tft.setTextColor(isActive ? C_RING : C_DIM, bgCol);
+  if (_amsHash != cache.amsHash || pr.activeTray != cache.activeTray ||
+      pr.amsExist != cache.amsExist) {
+    if (pr.amsExist) {
+      for (int k = 0; k < 4; k++) {
+        int slotX = 22 + k * 47;
+        bool isActive = (pr.activeTray == k);
         char slotNumStr[4];
         snprintf(slotNumStr, sizeof(slotNumStr), "%d", k + 1);
-        tft.drawString(slotNumStr, slotX + 20, 107);
-
-        // Short Filament Type (e.g. PLA, PETG, ABS)
-        String shortType =
-            slot.traySubBrands.length() ? slot.traySubBrands : slot.trayType;
-        if (shortType.startsWith("PLA"))
-          shortType = "PLA";
-        else if (shortType.startsWith("ABS"))
-          shortType = "ABS";
-        else if (shortType.startsWith("PETG"))
-          shortType = "PETG";
-        else if (shortType.startsWith("TPU"))
-          shortType = "TPU";
-        else if (shortType.startsWith("PA"))
-          shortType = "PA";
-        else if (shortType.startsWith("PC"))
-          shortType = "PC";
-        else if (shortType.startsWith("ASA"))
-          shortType = "ASA";
-        else if (shortType.startsWith("Support"))
-          shortType = "SPT";
-        else if (shortType.length() > 5)
-          shortType = shortType.substring(0, 5);
-
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextFont(1);
-        tft.setTextColor(C_TEXT, bgCol);
-        tft.drawString(shortType, slotX + 22, 124);
-
-        // Remaining capacity %
-        if (slot.remain >= 0 && slot.remain <= 100) {
-          char rStr[8];
-          snprintf(rStr, sizeof(rStr), "%d%%", slot.remain);
-          tft.setTextColor(C_DIM, bgCol);
-          tft.drawString(rStr, slotX + 22, 137);
-        }
-      } else {
-        // Empty / Invalid Slot
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextFont(1);
-        tft.setTextColor(C_DIM, bgCol);
-        char slotNumStr[8];
-        snprintf(slotNumStr, sizeof(slotNumStr), "A%d", k + 1);
-        tft.drawString(slotNumStr, slotX + 22, 118);
-        tft.drawString("--", slotX + 22, 132);
+        char emptyStr[8];
+        snprintf(emptyStr, sizeof(emptyStr), "A%d", k + 1);
+        drawDashboardSlotCard(slotX, pr.amsSlots[k], isActive, slotNumStr,
+                              emptyStr);
       }
+    } else {
+      // No AMS connected: Only draw slot 0 as "ext"
+      const AmsTrayInfo &ext = pr.extSlot.valid ? pr.extSlot : pr.amsSlots[0];
+      int slotX = 22;
+      bool isActive = (pr.activeTray == 254 || pr.activeTray == 255 ||
+                       pr.activeTray == 0 || pr.activeTray == 1 ||
+                       pr.status == "running" || pr.status == "pause");
+      drawDashboardSlotCard(slotX, ext, isActive, "ext", "ext");
+
+      // Clear the area for slots 2, 3, 4 inside Hero Card (x: 68..210, y: 99..150)
+      tft.fillRect(68, 99, 142, 51, C_CARD);
     }
     cache.amsHash = _amsHash;
     cache.activeTray = pr.activeTray;
+    cache.amsExist = pr.amsExist;
   }
 
   // 3. Bottom Left Card: Temperatures (y: 160, h: 68)
