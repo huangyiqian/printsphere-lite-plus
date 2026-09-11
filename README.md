@@ -1,6 +1,6 @@
 # PrintSphere Lite Plus (Fork 版本)
 
-![Version](https://img.shields.io/badge/Firmware-v0.4.95extfix-brightgreen)
+![Version](https://img.shields.io/badge/Firmware-v0.5.00-brightgreen)
 ![Backend Version](https://img.shields.io/badge/WebUI_Backend-v0.4.71--ui--clean-blue)
 ![License](https://img.shields.io/badge/License-Non--Commercial-orange)
 
@@ -35,6 +35,13 @@
 * **本地备份隔离**：本地支持保留开发与历史备份文件（`*.bak`），但自动拦截上云，保持 GitHub 代码库纯净轻量。
 * **源码瘦身**：剔除冗余的大文件及中间调试脚本，极大地提升了克隆与推送速度。
 
+### 5. ⚡ ESP 内置 Web 8081 服务与长时间运行稳定性加固 (v0.5.00)
+* **零堆开销流式响应**：重构 ESP8266 内置 Web 管理页面为 PROGMEM 逐段流式输出，将页面请求时的动态堆内存峰值降为 0 字节，彻底杜绝小内存设备因页面请求导致的内存碎片化与 OOM 崩溃。
+* **端口假死自愈守护**：深度修复 lwIP 底层 `_listen_pcb` 异常释放引发的“端口失活但标记已启动”僵死 bug，新增 `isEspServerListening()` 监听活性校验，失效自动重新拉起服务。
+* **Wi-Fi 偶发抖动保护**：移除了 Wi-Fi 信号波动/偶发丢包时主动注销 Web 监听 Socket 的破坏性逻辑，防止频繁重建导致底层 TCP PCB 堆积耗尽。
+* **投机连接防阻塞优化**：现代浏览器并发预连接采用 100ms 超时快速丢弃，请求行等待超时由 2000ms 收紧至 600ms，杜绝长时间占有 CPU 阻塞主循环与 MQTT 接收。
+* **前端智能静默轮询**：后台轮询放宽至 8 秒并绑定页面可见性检测（`!document.hidden`），标签页处于后台或息屏时完全停止请求，根治 `TIME_WAIT` 堆积占用。
+
 ---
 
 ## 🖼️ 界面与实机效果预览
@@ -52,7 +59,7 @@
 
 ## 🏷️ 版本号信息
 
-* **固件版本 (Firmware)**：`v0.4.95extfix`
+* **固件版本 (Firmware)**：`v0.5.00`
 * **后端配置工具 (Backend WebUI)**：`v0.4.71-ui-clean`
 
 ---
@@ -76,6 +83,7 @@ build-release.ps1 生成完整发布包脚本
 
 * **主控**：ESP8266EX / NodeMCU 兼容开发板
 * **屏幕**：240x240 7针 ST7789 SPI 显示屏
+* **外壳**：外壳模型可选择https://makerworld.com.cn/zh/models/2587841-cheng-ben-25-printsphere-litetuo-zhu-da-yin-zhuang#profileId-2978954
 * **接线参考 (PlatformIO 默认)**：
   * `CS`: GPIO 15
   * `DC`: GPIO 0

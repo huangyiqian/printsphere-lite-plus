@@ -18,7 +18,7 @@ BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
 
-const char *FIRMWARE_VERSION = "firmware-v0.4.95extfix";
+const char *FIRMWARE_VERSION = "firmware-v0.5.00";
 
 // Color definitions for BGR565 display panel ((B<<11) | (G<<5) | R)
 #define BG_BLACK 0x0000
@@ -252,6 +252,8 @@ uint8_t appliedBrightness = 0;
 const unsigned long DUAL_NOZZLE_SWITCH_MS = 3000;
 
 void startEspServer();
+void restartEspServer();
+bool isEspServerListening();
 String normalizedModelName(const String &value);
 bool chamberFallbackAllowedForModel(const String &value);
 
@@ -733,6 +735,7 @@ String statusJson() {
   doc["mqtt_username"] = stored.mqttUsername.length() ? "set" : "";
   doc["mqtt_connected"] = mqttNet.connected();
   doc["brightness"] = appliedBrightness;
+  doc["free_heap"] = ESP.getFreeHeap();
   doc["printer_count"] = printerOptionCount;
   doc["online"] = pr.online;
   doc["status"] = pr.status;
@@ -884,18 +887,23 @@ bool selectPrinterBySerial(const String &serial) {
   return false;
 }
 
-String espHomeHtml() {
+void sendEspHomeHtml(WiFiClient &client) {
+  client.print(F("HTTP/1.1 200 OK\r\n"
+                 "Content-Type: text/html; charset=utf-8\r\n"
+                 "Cache-Control: no-store\r\n"
+                 "Connection: close\r\n\r\n"));
+
   String ip = WiFi.localIP().toString();
   String selected = stored.name.length() ? stored.name : stored.serial;
   String modelName = normalizedModelName(stored.model);
   bool hasSchedule = stored.brightnessSchedule.length() > 2;
 
-  String body;
-  body.reserve(7500);
-  body += F(
+  
+  
+  client.print( F(
       "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta "
-      "name=\"viewport\" content=\"width=device-width,initial-scale=1\">");
-  body +=
+      "name=\"viewport\" content=\"width=device-width,initial-scale=1\">"));
+  client.print(
       F("<link rel=\"icon\" type=\"image/svg+xml\" "
         "href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
         "viewBox='0 0 100 120'%3E%3Crect width='100' height='120' rx='16' "
@@ -903,281 +911,287 @@ String espHomeHtml() {
         "fill='%23ffffff'/%3E%3Cpolygon points='13,75 47,60 47,107 13,107' "
         "fill='%23ffffff'/%3E%3Cpolygon points='53,13 87,13 87,55 53,39' "
         "fill='%23ffffff'/%3E%3Cpolygon points='53,45 87,61 87,107 53,107' "
-        "fill='%23ffffff'/%3E%3C/svg%3E\">");
-  body += F("<title>PrintSphere Lite Plus</title><style>");
-  body += F("*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-"
+        "fill='%23ffffff'/%3E%3C/svg%3E\">"));
+  client.print( F("<title>PrintSphere Lite Plus</title><style>"));
+  client.print( F("*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-"
             "system,BlinkMacSystemFont,\"SF Pro Display\",\"SF Pro "
-            "Text\",\"Segoe UI\",Roboto,sans-serif}");
-  body += F("body{background:#0b0e17;background-image:radial-gradient(at 0% "
+            "Text\",\"Segoe UI\",Roboto,sans-serif}"));
+  client.print( F("body{background:#0b0e17;background-image:radial-gradient(at 0% "
             "0%,rgba(0,122,255,0.18) 0px,transparent 50%),radial-gradient(at "
             "100% 100%,rgba(175,82,222,0.18) 0px,transparent "
             "50%);color:#f2f2f7;min-height:100vh;padding:24px "
-            "16px;display:flex;justify-content:center;align-items:flex-start}");
-  body += F(".container{width:100%;max-width:880px}");
-  body += F(".header{margin-bottom:24px;text-align:left}");
-  body += F(".header "
+            "16px;display:flex;justify-content:center;align-items:flex-start}"));
+  client.print( F(".container{width:100%;max-width:880px}"));
+  client.print( F(".header{margin-bottom:24px;text-align:left}"));
+  client.print( F(".header "
             "h1{font-size:28px;font-weight:700;letter-spacing:-0.5px;"
             "background:linear-gradient(135deg,#ffffff 0%,#a1a1a6 "
             "100%);-webkit-background-clip:text;-webkit-text-fill-color:"
-            "transparent}");
-  body += F(".header .sub{color:#8e8e93;font-size:14px;margin-top:4px}");
-  body += F(".grid{display:grid;grid-template-columns:1fr;gap:16px}@media(min-"
-            "width:640px){.grid{grid-template-columns:repeat(2,1fr)}}");
-  body += F(".glass{background:rgba(255,255,255,0.06);-webkit-backdrop-filter:"
+            "transparent}"));
+  client.print( F(".header .sub{color:#8e8e93;font-size:14px;margin-top:4px}"));
+  client.print( F(".grid{display:grid;grid-template-columns:1fr;gap:16px}@media(min-"
+            "width:640px){.grid{grid-template-columns:repeat(2,1fr)}}"));
+  client.print( F(".glass{background:rgba(255,255,255,0.06);-webkit-backdrop-filter:"
             "blur(30px) saturate(190%);backdrop-filter:blur(30px) "
             "saturate(190%);border:1px solid "
             "rgba(255,255,255,0.12);border-radius:20px;padding:20px;box-shadow:"
             "0 8px 32px 0 rgba(0,0,0,0.37);transition:transform .2s "
-            "ease,border-color .2s ease}");
-  body += F(".glass:hover{border-color:rgba(255,255,255,0.22)}");
-  body +=
+            "ease,border-color .2s ease}"));
+  client.print( F(".glass:hover{border-color:rgba(255,255,255,0.22)}"));
+  client.print(
       F(".glass "
         "h2{font-size:16px;font-weight:600;color:#f2f2f7;margin-bottom:14px;"
-        "display:flex;align-items:center;justify-content:space-between}");
-  body +=
+        "display:flex;align-items:center;justify-content:space-between}"));
+  client.print(
       F(".row{display:flex;justify-content:space-between;align-items:center;"
-        "padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)}");
-  body += F(".row:last-child{border-bottom:none}");
-  body += F(".label{color:#98989d;font-size:14px}");
-  body += F(".value{color:#ffffff;font-size:14px;font-weight:500}");
-  body += F(".badge{padding:4px "
+        "padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05)}"));
+  client.print( F(".row:last-child{border-bottom:none}"));
+  client.print( F(".label{color:#98989d;font-size:14px}"));
+  client.print( F(".value{color:#ffffff;font-size:14px;font-weight:500}"));
+  client.print( F(".badge{padding:4px "
             "10px;border-radius:12px;font-size:12px;font-weight:600;display:"
-            "inline-block}");
-  body += F(".badge.ok{background:rgba(52,199,89,0.2);color:#30d158;border:1px "
-            "solid rgba(52,199,89,0.3)}");
-  body += F(".badge.err{background:rgba(255,69,58,0.2);color:#ff453a;border:"
-            "1px solid rgba(255,69,58,0.3)}");
-  body += F(".slider-container{margin-top:10px;text-align:center}");
-  body += F(".slider-val{font-size:32px;font-weight:700;color:#0a84ff;letter-"
-            "spacing:-1px;margin-bottom:8px}");
-  body += F("input[type=range]{width:100%;height:8px;-webkit-appearance:none;"
+            "inline-block}"));
+  client.print( F(".badge.ok{background:rgba(52,199,89,0.2);color:#30d158;border:1px "
+            "solid rgba(52,199,89,0.3)}"));
+  client.print( F(".badge.err{background:rgba(255,69,58,0.2);color:#ff453a;border:"
+            "1px solid rgba(255,69,58,0.3)}"));
+  client.print( F(".slider-container{margin-top:10px;text-align:center}"));
+  client.print( F(".slider-val{font-size:32px;font-weight:700;color:#0a84ff;letter-"
+            "spacing:-1px;margin-bottom:8px}"));
+  client.print( F("input[type=range]{width:100%;height:8px;-webkit-appearance:none;"
             "background:rgba(255,255,255,0.12);border-radius:4px;outline:none;"
-            "margin:8px 0;transition:opacity .2s}");
-  body +=
+            "margin:8px 0;transition:opacity .2s}"));
+  client.print(
       F("input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:"
         "22px;height:22px;border-radius:50%;background:#ffffff;box-shadow:0 "
         "2px 8px rgba(0,0,0,0.4);cursor:pointer;transition:transform .1s "
-        "ease,background .2s ease}");
-  body += F(
-      "input[type=range]::-webkit-slider-thumb:active{transform:scale(1.15)}");
-  body += F("input[type=range]:disabled{opacity:0.25;cursor:not-allowed}");
-  body += F("input[type=range]:disabled::-webkit-slider-thumb{background:#"
-            "636366;box-shadow:none;cursor:not-allowed}");
-  body +=
+        "ease,background .2s ease}"));
+  client.print( F(
+      "input[type=range]::-webkit-slider-thumb:active{transform:scale(1.15)}"));
+  client.print( F("input[type=range]:disabled{opacity:0.25;cursor:not-allowed}"));
+  client.print( F("input[type=range]:disabled::-webkit-slider-thumb{background:#"
+            "636366;box-shadow:none;cursor:not-allowed}"));
+  client.print(
       F(".segmented{display:flex;background:rgba(0,0,0,0.3);padding:3px;border-"
-        "radius:12px;border:1px solid rgba(255,255,255,0.08);gap:4px}");
-  body += F(
+        "radius:12px;border:1px solid rgba(255,255,255,0.08);gap:4px}"));
+  client.print( F(
       ".segmented button{flex:1;padding:8px "
       "12px;border:none;border-radius:9px;background:transparent;color:#98989d;"
-      "font-size:13px;font-weight:500;cursor:pointer;transition:all .2s ease}");
-  body += F(".segmented "
+      "font-size:13px;font-weight:500;cursor:pointer;transition:all .2s ease}"));
+  client.print( F(".segmented "
             "button.active{background:rgba(255,255,255,0.2);color:#ffffff;box-"
-            "shadow:0 2px 8px rgba(0,0,0,0.25);font-weight:600}");
-  body += F(
-      ".switch{position:relative;display:inline-block;width:48px;height:28px}");
-  body += F(".switch input{opacity:0;width:0;height:0}");
-  body += F(".slider-round{position:absolute;cursor:pointer;top:0;left:0;right:"
+            "shadow:0 2px 8px rgba(0,0,0,0.25);font-weight:600}"));
+  client.print( F(
+      ".switch{position:relative;display:inline-block;width:48px;height:28px}"));
+  client.print( F(".switch input{opacity:0;width:0;height:0}"));
+  client.print( F(".slider-round{position:absolute;cursor:pointer;top:0;left:0;right:"
             "0;bottom:0;background:rgba(255,255,255,0.15);border-radius:28px;"
-            "transition:.3s;border:1px solid rgba(255,255,255,0.1)}");
-  body += F(".slider-round:before{position:absolute;content:\"\";height:22px;"
+            "transition:.3s;border:1px solid rgba(255,255,255,0.1)}"));
+  client.print( F(".slider-round:before{position:absolute;content:\"\";height:22px;"
             "width:22px;left:2px;bottom:2px;background:#ffffff;border-radius:"
-            "50%;transition:.3s;box-shadow:0 2px 4px rgba(0,0,0,0.3)}");
-  body += F("input:checked + .slider-round{background:#34c759}");
-  body += F("input:checked + .slider-round:before{transform:translateX(20px)}");
-  body += F(".slot-box{background:rgba(0,0,0,0.2);border:1px solid "
+            "50%;transition:.3s;box-shadow:0 2px 4px rgba(0,0,0,0.3)}"));
+  client.print( F("input:checked + .slider-round{background:#34c759}"));
+  client.print( F("input:checked + .slider-round:before{transform:translateX(20px)}"));
+  client.print( F(".slot-box{background:rgba(0,0,0,0.2);border:1px solid "
             "rgba(255,255,255,0.08);border-radius:14px;padding:12px;margin-top:"
-            "10px}");
-  body += F(".slot-row{display:flex;align-items:center;justify-content:space-"
-            "between;gap:8px;margin-bottom:8px}");
-  body += F(".slot-row:last-child{margin-bottom:0}");
-  body +=
+            "10px}"));
+  client.print( F(".slot-row{display:flex;align-items:center;justify-content:space-"
+            "between;gap:8px;margin-bottom:8px}"));
+  client.print( F(".slot-row:last-child{margin-bottom:0}"));
+  client.print(
       F("input[type=time]{background:rgba(255,255,255,0.1);border:1px solid "
         "rgba(255,255,255,0.15);border-radius:8px;color:#fff;padding:4px "
-        "8px;font-size:13px;outline:none}");
-  body += F("pre{background:rgba(0,0,0,0.4);border:1px solid "
+        "8px;font-size:13px;outline:none}"));
+  client.print( F("pre{background:rgba(0,0,0,0.4);border:1px solid "
             "rgba(255,255,255,0.1);border-radius:12px;padding:12px;font-size:"
             "12px;color:#30d158;overflow-x:auto;white-space:pre-wrap;margin-"
-            "top:12px;display:none}");
-  body += F(".btn-action{background:rgba(255,255,255,0.1);border:1px solid "
+            "top:12px;display:none}"));
+  client.print( F(".btn-action{background:rgba(255,255,255,0.1);border:1px solid "
             "rgba(255,255,255,0.15);color:#0a84ff;padding:6px "
             "14px;border-radius:10px;font-size:13px;font-weight:500;cursor:"
-            "pointer;transition:all .2s}");
-  body += F(".btn-action:hover{background:rgba(255,255,255,0.18)}");
-  body += F(".btn-primary{width:100%;padding:10px "
+            "pointer;transition:all .2s}"));
+  client.print( F(".btn-action:hover{background:rgba(255,255,255,0.18)}"));
+  client.print( F(".btn-primary{width:100%;padding:10px "
             "16px;margin-top:14px;background:linear-gradient(135deg,#0a84ff "
             "0%,#0066cc 100%);border:1px solid "
             "rgba(255,255,255,0.25);border-radius:12px;color:#ffffff;font-size:"
             "14px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px "
-            "rgba(10,132,255,0.35);transition:all .2s ease}");
-  body += F(".btn-primary:hover{transform:translateY(-1px);box-shadow:0 6px "
-            "20px rgba(10,132,255,0.5)}");
-  body += F(".btn-primary:active{transform:translateY(0)}");
-  body += F(".toast{position:fixed;bottom:24px;left:50%;transform:translateX(-"
+            "rgba(10,132,255,0.35);transition:all .2s ease}"));
+  client.print( F(".btn-primary:hover{transform:translateY(-1px);box-shadow:0 6px "
+            "20px rgba(10,132,255,0.5)}"));
+  client.print( F(".btn-primary:active{transform:translateY(0)}"));
+  client.print( F(".toast{position:fixed;bottom:24px;left:50%;transform:translateX(-"
             "50%);background:rgba(40,40,40,0.9);-webkit-backdrop-filter:blur("
             "20px);backdrop-filter:blur(20px);color:#fff;padding:10px "
             "22px;border-radius:20px;font-size:13px;font-weight:500;border:1px "
             "solid rgba(255,255,255,0.2);box-shadow:0 10px 30px "
             "rgba(0,0,0,0.5);opacity:0;pointer-events:none;transition:opacity "
-            ".3s ease;z-index:999}");
-  body += F(".toast.show{opacity:1}");
-  body += F("</style></head><body><div class=\"container\">");
+            ".3s ease;z-index:999}"));
+  client.print( F(".toast.show{opacity:1}"));
+  client.print( F("</style></head><body><div class=\"container\">"));
 
-  body += F("<div class=\"header\"><h1>PrintSphere Lite Plus</h1><p "
-            "class=\"sub\">固件: ");
-  body += FIRMWARE_VERSION;
-  body += F(" | IP: ");
-  body += htmlEscape(ip);
-  body += F("</p></div>");
+  client.print( F("<div class=\"header\"><h1>PrintSphere Lite Plus</h1><p "
+            "class=\"sub\">固件: "));
+  client.print( FIRMWARE_VERSION);
+  client.print( F(" | IP: "));
+  client.print( htmlEscape(ip));
+  client.print( F("</p></div>"));
 
-  body += F("<div class=\"grid\">");
+  client.print( F("<div class=\"grid\">"));
 
   // Card 1: Device Status
-  body += F("<div class=\"glass\"><h2>设备状态</h2>");
-  body += F("<div class=\"row\"><span class=\"label\">打印机</span><span "
-            "class=\"value\">");
-  body += htmlEscape(selected.length() ? selected : String("未选择"));
-  body += F("</span></div>");
-  body += F("<div class=\"row\"><span class=\"label\">机型</span><span "
-            "class=\"value\">");
-  body += htmlEscape(modelName);
-  body += F("</span></div>");
-  body += F("<div class=\"row\"><span class=\"label\">MQTT</span><span "
-            "class=\"value\"><span class=\"badge ");
-  body += mqttNet.connected() ? F("ok") : F("err");
-  body += F("\">");
-  body += mqttNet.connected() ? F("已连接") : F("未连接");
-  body += F("</span></span></div></div>");
+  client.print( F("<div class=\"glass\"><h2>设备状态</h2>"));
+  client.print( F("<div class=\"row\"><span class=\"label\">打印机</span><span "
+            "class=\"value\">"));
+  client.print( htmlEscape(selected.length() ? selected : String("未选择")));
+  client.print( F("</span></div>"));
+  client.print( F("<div class=\"row\"><span class=\"label\">机型</span><span "
+            "class=\"value\">"));
+  client.print( htmlEscape(modelName));
+  client.print( F("</span></div>"));
+  client.print( F("<div class=\"row\"><span class=\"label\">MQTT</span><span "
+            "class=\"value\"><span class=\"badge "));
+  client.print( mqttNet.connected() ? F("ok") : F("err"));
+  client.print( F("\">"));
+  client.print( mqttNet.connected() ? F("已连接") : F("未连接"));
+  client.print( F("</span></span></div></div>"));
 
   // Card 2: Screen Brightness
-  body += F("<div class=\"glass\"><h2>屏幕亮度</h2><div "
-            "class=\"slider-container\"><div class=\"slider-val\" id=\"bv\">");
-  body += String(appliedBrightness);
-  body += F("%</div>");
-  body += F("<input type=\"range\" id=\"br\" min=\"0\" max=\"100\" value=\"");
-  body += String(appliedBrightness);
-  body += F("\">");
-  body += F("<p id=\"brHint\" "
+  client.print( F("<div class=\"glass\"><h2>屏幕亮度</h2><div "
+            "class=\"slider-container\"><div class=\"slider-val\" id=\"bv\">"));
+  client.print( String(appliedBrightness));
+  client.print( F("%</div>"));
+  client.print( F("<input type=\"range\" id=\"br\" min=\"0\" max=\"100\" value=\""));
+  client.print( String(appliedBrightness));
+  client.print( F("\">"));
+  client.print( F("<p id=\"brHint\" "
             "style=\"color:#8e8e93;font-size:12px;margin-top:6px\">"
-            "拖动实时应用背光</p></div></div>");
+            "拖动实时应用背光</p></div></div>"));
 
   // Card 3: Screen Layout
-  body += F("<div class=\"glass\"><h2>屏幕布局</h2><div class=\"segmented\">");
+  client.print( F("<div class=\"glass\"><h2>屏幕布局</h2><div class=\"segmented\">"));
   String lc = stored.layout;
-  body += F("<button id=\"lc0\" onclick=\"setLayout('classic')\"");
+  client.print( F("<button id=\"lc0\" onclick=\"setLayout('classic')\""));
   if (lc == "classic")
-    body += F(" class=\"active\"");
-  body += F(">经典</button>");
-  body += F("<button id=\"lc1\" onclick=\"setLayout('dashboard')\"");
+    client.print( F(" class=\"active\""));
+  client.print( F(">经典</button>"));
+  client.print( F("<button id=\"lc1\" onclick=\"setLayout('dashboard')\""));
   if (lc == "dashboard")
-    body += F(" class=\"active\"");
-  body += F(">面板</button>");
-  body += F("<button id=\"lc2\" onclick=\"setLayout('clock')\"");
+    client.print( F(" class=\"active\""));
+  client.print( F(">面板</button>"));
+  client.print( F("<button id=\"lc2\" onclick=\"setLayout('clock')\""));
   if (lc == "clock")
-    body += F(" class=\"active\"");
-  body += F(">时钟</button>");
-  body += F("</div></div>");
+    client.print( F(" class=\"active\""));
+  client.print( F(">时钟</button>"));
+  client.print( F("</div></div>"));
 
   // Card 4: Brightness Schedule
-  body += F(
-      "<div class=\"glass\"><h2><span>亮度定时</span><label class=\"switch\">");
-  body +=
-      F("<input type=\"checkbox\" id=\"bse\" onchange=\"toggleSchedule()\"");
+  client.print( F(
+      "<div class=\"glass\"><h2><span>亮度定时</span><label class=\"switch\">"));
+  client.print(
+      F("<input type=\"checkbox\" id=\"bse\" onchange=\"toggleSchedule()\""));
   if (hasSchedule)
-    body += F(" checked");
-  body += F("><span class=\"slider-round\"></span></label></h2>");
+    client.print( F(" checked"));
+  client.print( F("><span class=\"slider-round\"></span></label></h2>"));
 
-  body += F("<div id=\"schedFields\"");
+  client.print( F("<div id=\"schedFields\""));
   if (!hasSchedule)
-    body += F(" style=\"display:none\"");
-  body += F("><div class=\"slot-box\">");
+    client.print( F(" style=\"display:none\""));
+  client.print( F("><div class=\"slot-box\">"));
 
   // Night Slot 0
-  body += F("<div class=\"slot-row\"><span class=\"label\">夜间段</span><div>");
-  body += F("<input type=\"time\" id=\"s0s\" value=\"22:00\"><span "
-            "style=\"color:#8e8e93;margin:0 4px\">~</span>");
-  body += F("<input type=\"time\" id=\"s0e\" value=\"06:00\"></div></div>");
-  body += F("<div class=\"slot-row\"><span class=\"label\">夜间亮度</span>");
-  body +=
-      F("<div style=\"display:flex;align-items:center;gap:8px;width:60%\">");
-  body += F("<input type=\"range\" id=\"s0b\" min=\"0\" max=\"100\" "
+  client.print( F("<div class=\"slot-row\"><span class=\"label\">夜间段</span><div>"));
+  client.print( F("<input type=\"time\" id=\"s0s\" value=\"22:00\"><span "
+            "style=\"color:#8e8e93;margin:0 4px\">~</span>"));
+  client.print( F("<input type=\"time\" id=\"s0e\" value=\"06:00\"></div></div>"));
+  client.print( F("<div class=\"slot-row\"><span class=\"label\">夜间亮度</span>"));
+  client.print(
+      F("<div style=\"display:flex;align-items:center;gap:8px;width:60%\">"));
+  client.print( F("<input type=\"range\" id=\"s0b\" min=\"0\" max=\"100\" "
             "value=\"20\"><span id=\"s0bv\" "
             "style=\"color:#0a84ff;font-weight:600;min-width:32px;text-align:"
-            "right\">20%</span></div></div></div>");
+            "right\">20%</span></div></div></div>"));
 
   // Day Slot 1
-  body += F("<div class=\"slot-box\"><div class=\"slot-row\"><span "
-            "class=\"label\">日间段</span><div>");
-  body += F("<input type=\"time\" id=\"s1s\" value=\"06:00\"><span "
-            "style=\"color:#8e8e93;margin:0 4px\">~</span>");
-  body += F("<input type=\"time\" id=\"s1e\" value=\"22:00\"></div></div>");
-  body += F("<div class=\"slot-row\"><span class=\"label\">日间亮度</span>");
-  body +=
-      F("<div style=\"display:flex;align-items:center;gap:8px;width:60%\">");
-  body += F("<input type=\"range\" id=\"s1b\" min=\"0\" max=\"100\" "
+  client.print( F("<div class=\"slot-box\"><div class=\"slot-row\"><span "
+            "class=\"label\">日间段</span><div>"));
+  client.print( F("<input type=\"time\" id=\"s1s\" value=\"06:00\"><span "
+            "style=\"color:#8e8e93;margin:0 4px\">~</span>"));
+  client.print( F("<input type=\"time\" id=\"s1e\" value=\"22:00\"></div></div>"));
+  client.print( F("<div class=\"slot-row\"><span class=\"label\">日间亮度</span>"));
+  client.print(
+      F("<div style=\"display:flex;align-items:center;gap:8px;width:60%\">"));
+  client.print( F("<input type=\"range\" id=\"s1b\" min=\"0\" max=\"100\" "
             "value=\"100\"><span id=\"s1bv\" "
             "style=\"color:#0a84ff;font-weight:600;min-width:32px;text-align:"
-            "right\">100%</span></div></div></div>");
+            "right\">100%</span></div></div></div>"));
 
-  body += F("<button class=\"btn-primary\" "
-            "onclick=\"saveSchedule(true)\">保存并推送到设备</button>");
-  body += F("</div></div>");
+  client.print( F("<button class=\"btn-primary\" "
+            "onclick=\"saveSchedule(true)\">保存并推送到设备</button>"));
+  client.print( F("</div></div>"));
 
   // Card 5: Real-time Debug Status
-  body += F("<div class=\"glass\" style=\"grid-column:1 / "
-            "-1\"><h2><span>实时调试数据</span>");
-  body += F("<button class=\"btn-action\" onclick=\"toggleJson(this)\">查看 "
-            "JSON</button></h2><pre id=\"log\"></pre></div>");
+  client.print( F("<div class=\"glass\" style=\"grid-column:1 / "
+            "-1\"><h2><span>实时调试数据</span>"));
+  client.print( F("<button class=\"btn-action\" onclick=\"toggleJson(this)\">查看 "
+            "JSON</button></h2><pre id=\"log\"></pre></div>"));
 
-  body +=
-      F("</div></div><div id=\"toast\" class=\"toast\"></div>"); // end grid,
+  client.print(
+      F("</div></div><div id=\"toast\" class=\"toast\"></div>")); // end grid,
                                                                  // container,
                                                                  // toast
 
   // JavaScript
-  body += F("<script>\n");
-  body += F("const savedSchedule = ");
-  body += (stored.brightnessSchedule.length() > 0 ? stored.brightnessSchedule
-                                                  : F("[]"));
-  body += F(";\n");
-  body += F("function showToast(msg){\n");
-  body += F("  let t=document.getElementById('toast');if(!t)return;\n");
-  body += F("  t.textContent=msg;t.classList.add('show');\n");
-  body += F("  setTimeout(()=>t.classList.remove('show'),2500);\n");
-  body += F("}\n");
-  body += F("function updateManualBrightnessState(){\n");
-  body += F("  var c=document.getElementById('bse'), "
-            "hint=document.getElementById('brHint');\n");
-  body += F("  if(!hint)return;\n");
-  body += F("  if(c&&c.checked){\n");
-  body += F("    hint.textContent='显示目前屏幕实时亮度（已启用定时规则）';\n");
-  body += F("  }else{\n");
-  body += F("    hint.textContent='拖动实时应用背光';\n");
-  body += F("  }\n");
-  body += F("}\n");
-  body += F("function initScheduleUI(){\n");
-  body += F("  if(Array.isArray(savedSchedule) && savedSchedule.length>0){\n");
-  body += F("    for(let i=0;i<Math.min(savedSchedule.length,2);i++){\n");
-  body += F("      let s=savedSchedule[i];\n");
-  body += F("      if(s.sh!==undefined){\n");
-  body +=
-      F("        let st=(s.sh<10?'0':'')+s.sh+':'+(s.sm<10?'0':'')+s.sm;\n");
-  body +=
-      F("        let et=(s.eh<10?'0':'')+s.eh+':'+(s.em<10?'0':'')+s.em;\n");
-  body += F("        let elS=document.getElementById('s'+i+'s'), "
+  client.print( F("<script>\n"));
+  client.print(F("const savedSchedule = "));
+  {
+    String sched = stored.brightnessSchedule;
+    sched.trim();
+    if (!sched.startsWith("[") || !sched.endsWith("]")) {
+      sched = "[]";
+    }
+    client.print(sched);
+  }
+  client.print(F(";\n"));
+  client.print( F("function showToast(msg){\n"));
+  client.print( F("  let t=document.getElementById('toast');if(!t)return;\n"));
+  client.print( F("  t.textContent=msg;t.classList.add('show');\n"));
+  client.print( F("  setTimeout(()=>t.classList.remove('show'),2500);\n"));
+  client.print( F("}\n"));
+  client.print( F("function updateManualBrightnessState(){\n"));
+  client.print( F("  var c=document.getElementById('bse'), "
+            "hint=document.getElementById('brHint');\n"));
+  client.print( F("  if(!hint)return;\n"));
+  client.print( F("  if(c&&c.checked){\n"));
+  client.print( F("    hint.textContent='显示目前屏幕实时亮度（已启用定时规则）';\n"));
+  client.print( F("  }else{\n"));
+  client.print( F("    hint.textContent='拖动实时应用背光';\n"));
+  client.print( F("  }\n"));
+  client.print( F("}\n"));
+  client.print( F("function initScheduleUI(){\n"));
+  client.print( F("  if(Array.isArray(savedSchedule) && savedSchedule.length>0){\n"));
+  client.print( F("    for(let i=0;i<Math.min(savedSchedule.length,2);i++){\n"));
+  client.print( F("      let s=savedSchedule[i];\n"));
+  client.print( F("      if(s.sh!==undefined){\n"));
+  client.print(
+      F("        let st=(s.sh<10?'0':'')+s.sh+':'+(s.sm<10?'0':'')+s.sm;\n"));
+  client.print(
+      F("        let et=(s.eh<10?'0':'')+s.eh+':'+(s.em<10?'0':'')+s.em;\n"));
+  client.print( F("        let elS=document.getElementById('s'+i+'s'), "
             "elE=document.getElementById('s'+i+'e'), "
             "elB=document.getElementById('s'+i+'b'), "
-            "elBv=document.getElementById('s'+i+'bv');\n");
-  body += F("        if(elS)elS.value=st; if(elE)elE.value=et;\n");
-  body += F("        if(elB && s.b!==undefined){elB.value=s.b; "
-            "if(elBv)elBv.textContent=s.b+'%';}\n");
-  body += F("      }\n");
-  body += F("    }\n");
-  body += F("  }\n");
-  body += F("  updateManualBrightnessState();\n");
-  body += F("}\n");
-  body += F("window.addEventListener('DOMContentLoaded', initScheduleUI);\n");
+            "elBv=document.getElementById('s'+i+'bv');\n"));
+  client.print( F("        if(elS)elS.value=st; if(elE)elE.value=et;\n"));
+  client.print( F("        if(elB && s.b!==undefined){elB.value=s.b; "
+            "if(elBv)elBv.textContent=s.b+'%';}\n"));
+  client.print( F("      }\n"));
+  client.print( F("    }\n"));
+  client.print( F("  }\n"));
+  client.print( F("  updateManualBrightnessState();\n"));
+  client.print( F("}\n"));
+  client.print( F("window.addEventListener('DOMContentLoaded', initScheduleUI);\n"));
 
-  body +=
+  client.print(
       F("function "
         "refreshStatus(){fetch('/api/"
         "status',{cache:'no-store'}).then(r=>r.json()).then(d=>{let "
@@ -1185,68 +1199,71 @@ String espHomeHtml() {
         "textContent=JSON.stringify(d,null,2);if(d.brightness!==undefined){var "
         "br=document.getElementById('br'),bv=document.getElementById('bv');if("
         "br)br.value=d.brightness;if(bv)bv.textContent=d.brightness+'%';}})."
-        "catch(e=>{});}\n");
-  body += F("setInterval(refreshStatus,3000);\n");
-  body +=
+        "catch(e=>{});}\n"));
+  client.print( F("setInterval(function(){if(!document.hidden)refreshStatus();},8000);\n"));
+  client.print(
       F("function toggleJson(btn){const "
         "el=document.getElementById('log');if(el.style.display==='none'||!el."
         "style.display){el.style.display='block';refreshStatus();btn."
         "textContent='隐藏 "
-        "JSON'}else{el.style.display='none';btn.textContent='查看 JSON'}}\n");
-  body += F("function "
+        "JSON'}else{el.style.display='none';btn.textContent='查看 JSON'}}\n"));
+  client.print( F("function "
             "postConfig(data){fetch('/api/"
             "config',{method:'POST',headers:{'Content-Type':'application/"
             "json'},body:JSON.stringify(data)}).then(()=>refreshStatus())."
-            "catch(e=>console.error(e));}\n");
-  body += F("let "
+            "catch(e=>console.error(e));}\n"));
+  client.print( F("let "
             "brt=document.getElementById('br');if(brt){brt.addEventListener('"
             "input',function(){document.getElementById('bv').textContent=this."
             "value+'%';});brt.addEventListener('change',function(){postConfig({"
-            "brightness:parseInt(this.value)});});}\n");
-  body += F("function setLayout(v){document.querySelectorAll('.segmented "
+            "brightness:parseInt(this.value)});});}\n"));
+  client.print( F("function setLayout(v){document.querySelectorAll('.segmented "
             "button').forEach(b=>b.classList.remove('active'));const "
             "idx=['classic','dashboard','clock'].indexOf(v);if(idx>=0)document."
             "getElementById('lc'+idx).classList.add('active');postConfig({"
-            "layout:v});}\n");
-  body += F("function toggleSchedule(){var "
+            "layout:v});}\n"));
+  client.print( F("function toggleSchedule(){var "
             "e=document.getElementById('schedFields'),c=document."
             "getElementById('bse');e.style.display=c.checked?'block':'none';"
-            "updateManualBrightnessState();saveSchedule(false);}\n");
-  body += F("function saveSchedule(notify){\n");
-  body += F("  var s=document.getElementById('bse');\n");
-  body += F("  if(!s.checked){\n");
-  body += F("    postConfig({brightness_schedule:''});\n");
-  body += F("    if(notify) showToast('✅ 定时已关闭并即时生效');\n");
-  body += F("    return;\n");
-  body += F("  }\n");
-  body += F("  var slots=[];\n");
-  body += F("  for(var i=0;i<2;i++){\n");
-  body += F("    var "
+            "updateManualBrightnessState();saveSchedule(false);}\n"));
+  client.print( F("function saveSchedule(notify){\n"));
+  client.print( F("  var s=document.getElementById('bse');\n"));
+  client.print( F("  if(!s.checked){\n"));
+  client.print( F("    postConfig({brightness_schedule:''});\n"));
+  client.print( F("    if(notify) showToast('✅ 定时已关闭并即时生效');\n"));
+  client.print( F("    return;\n"));
+  client.print( F("  }\n"));
+  client.print( F("  var slots=[];\n"));
+  client.print( F("  for(var i=0;i<2;i++){\n"));
+  client.print( F("    var "
             "st=document.getElementById('s'+i+'s').value,et=document."
             "getElementById('s'+i+'e').value,b=parseInt(document."
-            "getElementById('s'+i+'b').value);\n");
-  body += F("    if(st&&et){\n");
-  body += F("      var "
+            "getElementById('s'+i+'b').value);\n"));
+  client.print( F("    if(st&&et){\n"));
+  client.print( F("      var "
             "sh=parseInt(st.split(':')[0]),sm=parseInt(st.split(':')[1]),eh="
-            "parseInt(et.split(':')[0]),em=parseInt(et.split(':')[1]);\n");
-  body += F("      slots.push({sh:sh,sm:sm,eh:eh,em:em,b:b});\n");
-  body += F("    }\n");
-  body += F("  }\n");
-  body += F("  postConfig({brightness_schedule:JSON.stringify(slots)});\n");
-  body += F("  if(notify) showToast('✅ 已保存并即时推送到设备！');\n");
-  body += F("}\n");
-  body += F("document.querySelectorAll('#schedFields "
-            "input').forEach(function(el){\n");
-  body += F("  if(el.type==='range'){\n");
-  body += F("    "
+            "parseInt(et.split(':')[0]),em=parseInt(et.split(':')[1]);\n"));
+  client.print( F("      slots.push({sh:sh,sm:sm,eh:eh,em:em,b:b});\n"));
+  client.print( F("    }\n"));
+  client.print( F("  }\n"));
+  client.print( F("  postConfig({brightness_schedule:JSON.stringify(slots)});\n"));
+  client.print( F("  if(notify) showToast('✅ 已保存并即时推送到设备！');\n"));
+  client.print( F("}\n"));
+  client.print( F("document.querySelectorAll('#schedFields "
+            "input').forEach(function(el){\n"));
+  client.print( F("  if(el.type==='range'){\n"));
+  client.print( F("    "
             "el.addEventListener('input',function(){document.getElementById("
-            "this.id+'v').textContent=this.value+'%';});\n");
-  body += F("  }\n");
-  body += F("});\n");
-  body += F("</script></body></html>");
+            "this.id+'v').textContent=this.value+'%';});\n"));
+  client.print( F("  }\n"));
+  client.print( F("});\n"));
+  client.print( F("</script></body></html>"));
 
-  return body;
+  client.flush();
+  delay(1);
+  client.stop();
 }
+
 
 String applyConfigBody(const String &body, int &statusCode) {
   JsonDocument doc;
@@ -1463,10 +1480,6 @@ String configBodyFromQuery(const String &query) {
   }
   String body;
   serializeJson(doc, body);
-  body += F("</script>");
-  body += F("</div></body></html>");
-  body += F("</script>");
-  body += F("</div></body></html>");
   return body;
 }
 
@@ -1517,14 +1530,20 @@ void handleApiClient() {
   WiFiClient client = apiServer.accept();
   if (!client)
     return;
-  client.setTimeout(200);
+
+  // Wait max 100ms for initial HTTP request bytes to arrive
+  unsigned long startWait = millis();
+  while (!client.available() && client.connected() && (millis() - startWait < 100)) {
+    delay(2);
+  }
+  if (!client.available()) {
+    client.stop();
+    return;
+  }
+
+  client.setTimeout(600);
   String line = client.readStringUntil('\n');
   line.trim();
-  while (client.connected() && client.available()) {
-    String discard = client.readStringUntil('\n');
-    if (discard == "\r" || discard.length() == 0)
-      break;
-  }
   if (!line.length()) {
     client.stop();
     return;
@@ -1538,14 +1557,32 @@ void handleApiClient() {
   int q = target.indexOf('?');
   String path = q >= 0 ? target.substring(0, q) : target;
   String query = q >= 0 ? target.substring(q + 1) : "";
+
+  // Drain HTTP headers safely and parse Content-Length if present
+  int contentLength = 0;
+  unsigned long drainStart = millis();
+  while (client.connected() && (millis() - drainStart < 800)) {
+    if (client.available()) {
+      String header = client.readStringUntil('\n');
+      header.trim();
+      if (header.length() == 0)
+        break;
+      if (header.startsWith("Content-Length:") || header.startsWith("content-length:")) {
+        contentLength = header.substring(15).toInt();
+      }
+    } else {
+      delay(1);
+    }
+  }
+
   if (method == "OPTIONS") {
     sendHttpJson(client, 204, "{}");
   } else if (method == "GET" && path == "/") {
-    sendHttpHtml(client, espHomeHtml());
+    sendEspHomeHtml(client);
   } else if (method == "GET" && path == "/favicon.ico") {
     client.print(
         "HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\nCache-Control: "
-        "max-age=86400\r\nConnection: close\r\n\r\n");
+        "max-age=86400\r\nContent-Length: 326\r\nConnection: close\r\n\r\n");
     client.print(
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 120'><rect "
         "width='100' height='120' rx='16' fill='#0b0e17'/><polygon "
@@ -1590,10 +1627,22 @@ void handleApiClient() {
     displayDirty = true;
     sendHttpJson(client, 200, "{\"ok\":true}");
   } else if (method == "POST" && path == "/api/config") {
-    delay(50);
     String postBody;
-    while (client.connected() && client.available()) {
-      postBody += (char)client.read();
+    if (contentLength > 0 && contentLength <= 4096) {
+      postBody.reserve(contentLength + 1);
+      unsigned long postStart = millis();
+      while ((int)postBody.length() < contentLength && client.connected() && (millis() - postStart < 1500)) {
+        if (client.available()) {
+          postBody += (char)client.read();
+        } else {
+          delay(1);
+        }
+      }
+    } else {
+      delay(20);
+      while (client.connected() && client.available()) {
+        postBody += (char)client.read();
+      }
     }
     if (postBody.length() > 0 && postBody.length() <= 4096) {
       int sc = 200;
@@ -1606,13 +1655,20 @@ void handleApiClient() {
     sendHttpJson(client, 404, "{\"ok\":false,\"error\":\"not found\"}");
   }
 }
+bool isEspServerListening() {
+  return serverStarted && (apiServer.status() != 0);
+}
+
 void restartEspServer() {
-  if (serverStarted) {
-    apiServer.close();
-    delay(20);
-    apiServer.begin();
+  apiServer.close();
+  delay(20);
+  apiServer.begin();
+  if (apiServer.status() != 0) {
+    serverStarted = true;
     Serial.printf("ESP server restarted: http://%s:%d/\n",
                   WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT);
+  } else {
+    serverStarted = false;
   }
 }
 
@@ -1638,12 +1694,18 @@ void handleSerialConfig() {
 }
 
 void startEspServer() {
-  if (serverStarted)
+  if (isEspServerListening())
     return;
+  apiServer.close();
+  delay(10);
   apiServer.begin();
-  serverStarted = true;
-  Serial.printf("ESP server: http://%s:%d/\n",
-                WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT);
+  if (apiServer.status() != 0) {
+    serverStarted = true;
+    Serial.printf("ESP server: http://%s:%d/\n",
+                  WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT);
+  } else {
+    serverStarted = false;
+  }
 }
 
 bool mqttConfigReady() {
@@ -3724,8 +3786,22 @@ void loop() {
     Serial.println(response);
   }
 
-  if (httpNetworkReady() && !serverStarted)
-    startEspServer();
+  // Auto-heal web server: ensure listening whenever WiFi is connected (check every 3s)
+  static unsigned long lastServerCheck = 0;
+  static IPAddress lastRecordedIp = IPAddress(0, 0, 0, 0);
+
+  if (now - lastServerCheck >= 3000) {
+    lastServerCheck = now;
+    if (WiFi.status() == WL_CONNECTED && wifiHasIp()) {
+      IPAddress curIp = WiFi.localIP();
+      if (!isEspServerListening() || curIp != lastRecordedIp) {
+        restartEspServer();
+        if (isEspServerListening()) {
+          lastRecordedIp = curIp;
+        }
+      }
+    }
+  }
 
   bool configMode = configClientConnected();
   if (configMode && !lastConfigMode) {
@@ -3755,10 +3831,10 @@ void loop() {
 
   if (now - lastWifiCheck > 30000) {
     lastWifiCheck = now;
-    if (!wifiHasIp()) {
+    if (WiFi.status() != WL_CONNECTED || !wifiHasIp()) {
       wifiConnect();
       if (httpNetworkReady())
-        startEspServer();
+        restartEspServer();
     }
   }
 

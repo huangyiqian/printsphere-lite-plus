@@ -2,6 +2,7 @@
 
 | 版本 | 日期 | 改动 | 影响范围 | 回退说明 |
 |---|---|---|---|---|
+| firmware-v0.5.00 | 2026-09-12 | ESP 内置 Web (8081) 后台长时间运行稳定性深度加固：重构 HTML 页面为 PROGMEM 逐段流式输出，动态堆内存峰值降为 0 字节；增加 lwIP `_listen_pcb` 监听活性校验与自动自愈，杜绝端口僵死；移除 WiFi 抖动时主动 close 避免 TCP PCB 耗尽；限制投机连接等待 100ms 防止阻塞主循环；前端 8 秒智能静默轮询避免 TIME_WAIT 堆积；新增外壳模型链接 | 影响 ESP 8081 Web 服务、状态接口和主循环稳定性；不改云 MQTT 主链路、不改屏幕渲染 | 回退 `src/main.cpp` 的 `sendEspHomeHtml` 与 `handleApiClient` 即可恢复 v0.4.95 |
 | firmware-v0.4.95extfix | 2026-08-29 | 支持无 AMS 时自适应单 ext 外挂料槽排版，隐藏冗余空槽位；智能识别官方 RFID 耗材与第三方/自定义耗材，第三方耗材自动隐藏余量百分比 | 影响信息面板 Dashboard 耗材槽位渲染及 RFID 校验；不改云 MQTT、后端流程 | 回退 `drawDashboardFields` 与 `AmsTrayInfo` 即可恢复 v0.4.90 |
 | backend-v0.4.71-ui-clean | 2026-07-01 | 优化后端配置页布局：Bambu 登录改为紧凑表单；ESP 配置按 WiFi、设备、屏幕、高级 HTTP 兜底和操作按钮分组；状态提示集中显示，减少页面堆叠和空白 | 只影响后端页面 HTML/CSS 和版本标识；不改固件、不改云登录、串口写入、WiFi 配置、打印机同步和 MQTT 显示逻辑 | 回退 `companion/server.js` 中页面模板、CSS 和 `BACKEND_VERSION` 即可恢复 v0.4.70 |
 | firmware/backend-v0.4.70-dual-nozzle-fit | 2026-07-01 | 修复双喷嘴温度如 `250/50` 被省略成 `250/..` 的问题：信息面板温度卡扩大数值绘制宽度并取消省略，极端长文本才降字号但仍完整显示 | 只影响信息面板温度数值绘制和版本标识；不改 MQTT 字段解析、云配置和后端流程 | 回退 `drawDashboardCelsiusValue()` / `drawDashboardTempCard()` 和版本号即可恢复 v0.4.69 |

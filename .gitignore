@@ -41,3 +41,4 @@ desktop.ini
 * copy*
 compile_commands.json
 .clangd/
+.cache/
