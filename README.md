@@ -1,3 +1,5 @@
+[ English Version ](README_en.md) | [ 简体中文 ](README.md)
+
 # PrintSphere Lite Plus (Fork 版本)
 
 ![Version](https://img.shields.io/badge/Firmware-v0.5.00-brightgreen)
