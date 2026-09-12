@@ -14,6 +14,7 @@
 
 TFT_eSPI tft;
 WiFiServer apiServer(ESP_CONFIG_PORT);
+WiFiServer webServer80(80);
 BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
@@ -1821,6 +1822,9 @@ void handleApiClient() {
   if (!serverStarted)
     return;
   WiFiClient client = apiServer.accept();
+  if (!client) {
+    client = webServer80.accept();
+  }
   if (!client)
     return;
 
@@ -1954,8 +1958,10 @@ bool isEspServerListening() {
 
 void restartEspServer() {
   apiServer.close();
+  webServer80.close();
   delay(20);
   apiServer.begin();
+  webServer80.begin();
   if (apiServer.status() != 0) {
     serverStarted = true;
     Serial.printf("ESP server restarted: http://%s:%d/\n",
@@ -1990,8 +1996,10 @@ void startEspServer() {
   if (isEspServerListening())
     return;
   apiServer.close();
+  webServer80.close();
   delay(10);
   apiServer.begin();
+  webServer80.begin();
   if (apiServer.status() != 0) {
     serverStarted = true;
     Serial.printf("ESP server: http://%s:%d/\n",
