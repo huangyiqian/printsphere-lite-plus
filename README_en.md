@@ -2,7 +2,7 @@
 
 # PrintSphere Lite Plus (Enhanced Fork)
 
-![Version](https://img.shields.io/badge/Firmware-v0.5.00-brightgreen)
+![Version](https://img.shields.io/badge/Firmware-v0.5.10-brightgreen)
 ![Backend Version](https://img.shields.io/badge/WebUI_Backend-v0.4.71--ui--clean-blue)
 ![License](https://img.shields.io/badge/License-Non--Commercial-orange)
 
@@ -44,6 +44,14 @@ This project is an enhanced and improved fork of the original [PrintSphere Lite]
 * **Speculative connection handling**: Modern browser speculative pre-connections (0 bytes sent) are discarded within 100ms, and request line timeout is tightened from 2000ms to 600ms to avoid blocking the main loop or MQTT packets.
 * **Smart idle polling**: WebUI polling interval extended to 8 seconds and coupled with `!document.hidden` visibility checks, completely halting requests when the browser tab is backgrounded or screen locked to prevent `TIME_WAIT` socket buildup.
 
+### 6. 📱 Built-in Web Real-time Printer Dashboard & Seamless Dual-Port Access (v0.5.10)
+* **Full-width Real-time Status Card**: Added a dedicated glassmorphism live status dashboard featuring task state badges (Printing, Preparing, Paused, Finished, Standby), dual-color smooth gradient progress bar, and 24px large percentage display.
+* **6-Metric Operations Grid**: Real-time readouts for remaining time (auto-formatted in hours/minutes), current layer / total layers, 0.1°C nozzle and bed temperatures, chamber temperature, and Bambu speed modes (Silent 50%, Standard 100%, Sport 124%, Ludicrous 166%).
+* **AMS & External Spool Slot Capsules**: Dynamically displays loaded filament color swatches and material types, highlighting the active feed slot with a glowing green border; automatically hides remaining percentages for third-party non-RFID filaments to avoid misleading estimates.
+* **Smart Chamber Sensor N/A Handling**: Automatically filters out misleading telemetry placeholders (e.g. 5°C) on models lacking hardware chamber temperature sensors (A1, A1 mini, P1P, P1S), displaying clean `N/A` instead.
+* **Dual-Port Listening (Port 80 & 8081)**: Concurrently listens on standard HTTP port 80 and port 8081, allowing mobile browsers to access the dashboard directly via `http://<IP>` without entering `:8081`.
+* **Refined Device Status Row**: Streamlined the device card status row to remove redundant nozzle temperature numbers, keeping it clean with job status and progress.
+
 ---
 
 ## 🖼️ Interface & Hardware Previews
@@ -61,7 +69,7 @@ This project is an enhanced and improved fork of the original [PrintSphere Lite]
 
 ## 🏷️ Version Information
 
-* **Firmware Version**: `v0.5.00`
+* **Firmware Version**: `v0.5.10`
 * **Backend WebUI**: `v0.4.71-ui-clean`
 
 ---
