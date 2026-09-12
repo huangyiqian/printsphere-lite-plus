@@ -749,6 +749,38 @@ String statusJson() {
   doc["remaining_min"] = pr.remainingMin;
   doc["current_layer"] = pr.currentLayer;
   doc["total_layers"] = pr.totalLayers;
+  doc["spd_lvl"] = pr.spdLvl;
+  doc["spd_mag"] = pr.spdMag;
+  if (pr.amsExist) {
+    JsonArray amsArr = doc["ams"].to<JsonArray>();
+    for (int i = 0; i < 4; ++i) {
+      if (pr.amsSlots[i].valid) {
+        JsonObject t = amsArr.add<JsonObject>();
+        t["id"] = i;
+        char hex[10];
+        snprintf(hex, sizeof(hex), "#%02x%02x%02x",
+                 (uint8_t)(pr.amsSlots[i].trayColor >> 24),
+                 (uint8_t)(pr.amsSlots[i].trayColor >> 16),
+                 (uint8_t)(pr.amsSlots[i].trayColor >> 8));
+        t["color"] = hex;
+        t["type"] = pr.amsSlots[i].trayType;
+        t["remain"] = pr.amsSlots[i].remain;
+        t["active"] = (pr.activeTray == i);
+      }
+    }
+  }
+  if (pr.extSlot.valid) {
+    JsonObject ext = doc["ext"].to<JsonObject>();
+    char hex[10];
+    snprintf(hex, sizeof(hex), "#%02x%02x%02x",
+             (uint8_t)(pr.extSlot.trayColor >> 24),
+             (uint8_t)(pr.extSlot.trayColor >> 16),
+             (uint8_t)(pr.extSlot.trayColor >> 8));
+    ext["color"] = hex;
+    ext["type"] = pr.extSlot.trayType;
+    ext["remain"] = pr.extSlot.remain;
+    ext["active"] = (pr.activeTray == 254 || pr.activeTray == 255);
+  }
   String out;
   serializeJson(doc, out);
   return out;
@@ -955,6 +987,27 @@ void sendEspHomeHtml(WiFiClient &client) {
             "solid rgba(52,199,89,0.3)}"));
   client.print( F(".badge.err{background:rgba(255,69,58,0.2);color:#ff453a;border:"
             "1px solid rgba(255,69,58,0.3)}"));
+  client.print( F(".badge.warn{background:rgba(255,159,10,0.2);color:#ff9f0a;border:1px "
+            "solid rgba(255,159,10,0.3)}"));
+  client.print( F(".badge.info{background:rgba(10,132,255,0.2);color:#0a84ff;border:1px "
+            "solid rgba(10,132,255,0.3)}"));
+  client.print( F(".badge.muted{background:rgba(142,142,147,0.18);color:#8e8e93;border:1px "
+            "solid rgba(142,142,147,0.25)}"));
+  client.print( F(".metrics-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;"
+            "margin-top:14px}@media(min-width:640px){.metrics-grid{grid-template-columns:repeat(3,1fr);gap:12px}}"));
+  client.print( F(".metric-item{background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06);"
+            "border-radius:14px;padding:10px 14px}"));
+  client.print( F(".m-label{color:#8e8e93;font-size:12px;margin-bottom:4px;display:flex;align-items:center;gap:4px}"));
+  client.print( F(".m-val{color:#ffffff;font-size:16px;font-weight:600}"));
+  client.print( F(".prog-track{background:rgba(255,255,255,0.08);height:8px;border-radius:4px;"
+            "overflow:hidden;margin-top:8px}"));
+  client.print( F(".prog-fill{height:100%;width:0%;background:linear-gradient(90deg,#0a84ff,#30d158);"
+            "border-radius:4px;transition:width .4s ease}"));
+  client.print( F(".ams-pill{background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.12);"
+            "border-radius:10px;padding:5px 9px;display:flex;align-items:center;gap:6px;font-size:12px}"));
+  client.print( F(".ams-pill.active{border-color:#30d158;box-shadow:0 0 8px rgba(48,209,88,0.35)}"));
+  client.print( F(".ams-dot{width:10px;height:10px;border-radius:50%;display:inline-block;"
+            "border:1px solid rgba(255,255,255,0.3)}"));
   client.print( F(".slider-container{margin-top:10px;text-align:center}"));
   client.print( F(".slider-val{font-size:32px;font-weight:700;color:#0a84ff;letter-"
             "spacing:-1px;margin-bottom:8px}"));
@@ -1038,6 +1091,115 @@ void sendEspHomeHtml(WiFiClient &client) {
   client.print( F("</p></div>"));
 
   client.print( F("<div class=\"grid\">"));
+
+  // Dedicated Card: Printer Live Status
+  client.print( F("<div class=\"glass\" style=\"grid-column:1 / -1\">"));
+  client.print( F("<div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:12px\">"
+                  "<h2 style=\"margin-bottom:0\">打印机实时状态</h2>"
+                  "<span id=\"pStatusBadge\" class=\"badge "));
+  {
+    String st = pr.status;
+    st.toLowerCase();
+    if (!pr.online) {
+      client.print( F("muted\">离线"));
+    } else if (st == "running" || st == "printing") {
+      client.print( F("ok\">打印中"));
+    } else if (st == "prepare" || st == "preparing") {
+      client.print( F("info\">准备中"));
+    } else if (st == "pause" || st == "paused") {
+      client.print( F("warn\">已暂停"));
+    } else if (st == "finish" || st == "finished" || st == "done" || pr.progress >= 100) {
+      client.print( F("ok\">已完成"));
+    } else {
+      client.print( F("muted\">待机"));
+    }
+  }
+  client.print( F("</span></div>"));
+
+  // Progress Bar
+  client.print( F("<div><div style=\"display:flex;justify-content:space-between;align-items:baseline\">"
+                  "<span class=\"label\">任务进度</span><span id=\"pProgressVal\" style=\"font-size:24px;font-weight:700;color:#0a84ff\">"));
+  if (pr.progress >= 0) {
+    client.print( String((int)pr.progress) + "%" );
+  } else {
+    client.print( (pr.status == "finish") ? "100%" : "--" );
+  }
+  client.print( F("</span></div><div class=\"prog-track\"><div id=\"pProgressBar\" class=\"prog-fill\" style=\"width:"));
+  if (pr.progress >= 0) {
+    client.print( String((int)pr.progress) + "%" );
+  } else {
+    client.print( (pr.status == "finish") ? "100%" : "0%" );
+  }
+  client.print( F("\"></div></div></div>"));
+
+  // Metrics Grid
+  client.print( F("<div class=\"metrics-grid\">"));
+  // 1. Remaining Time
+  client.print( F("<div class=\"metric-item\"><div class=\"m-label\">⏱️ 剩余时间</div><div id=\"pRemain\" class=\"m-val\">"));
+  if (pr.status == "finish" || pr.progress >= 100) {
+    client.print( F("已完成") );
+  } else if (pr.remainingMin > 0) {
+    int h = pr.remainingMin / 60;
+    int m = pr.remainingMin % 60;
+    if (h > 0) client.print( String(h) + "小时 " + String(m) + "分" );
+    else client.print( String(m) + "分钟" );
+  } else if (pr.remainingMin == 0) {
+    client.print( F("即将完成") );
+  } else {
+    client.print( F("--") );
+  }
+  client.print( F("</div></div>"));
+
+  // 2. Layer
+  client.print( F("<div class=\"metric-item\"><div class=\"m-label\">📑 打印层数</div><div id=\"pLayer\" class=\"m-val\">"));
+  if (pr.currentLayer >= 0) {
+    if (pr.totalLayers > 0) client.print( String(pr.currentLayer) + " / " + String(pr.totalLayers) );
+    else client.print( String(pr.currentLayer) );
+  } else {
+    client.print( F("--") );
+  }
+  client.print( F("</div></div>"));
+
+  // 3. Nozzle Temp
+  client.print( F("<div class=\"metric-item\"><div class=\"m-label\">🌡️ 喷嘴温度</div><div id=\"pNozzle\" class=\"m-val\">"));
+  if (pr.nozzleTemp > 0) {
+    client.print( String(pr.nozzleTemp, 1) + " ℃" );
+  } else {
+    client.print( F("-- ℃") );
+  }
+  client.print( F("</div></div>"));
+
+  // 4. Bed Temp
+  client.print( F("<div class=\"metric-item\"><div class=\"m-label\">🛏️ 热床温度</div><div id=\"pBed\" class=\"m-val\">"));
+  if (pr.bedTemp > 0) {
+    client.print( String(pr.bedTemp, 1) + " ℃" );
+  } else {
+    client.print( F("-- ℃") );
+  }
+  client.print( F("</div></div>"));
+
+  // 5. Chamber Temp
+  client.print( F("<div class=\"metric-item\"><div class=\"m-label\">📦 机箱温度</div><div id=\"pChamber\" class=\"m-val\">"));
+  if (pr.chamberTemp > 0) {
+    client.print( String(pr.chamberTemp, 1) + " ℃" );
+  } else {
+    client.print( F("--") );
+  }
+  client.print( F("</div></div>"));
+
+  // 6. Speed
+  client.print( F("<div class=\"metric-item\"><div class=\"m-label\">⚡ 打印速度</div><div id=\"pSpeed\" class=\"m-val\">"));
+  if (pr.spdLvl == 1) client.print( F("静音 (50%)") );
+  else if (pr.spdLvl == 3) client.print( F("运动 (124%)") );
+  else if (pr.spdLvl == 4) client.print( F("狂暴 (166%)") );
+  else if (pr.spdLvl == 2) client.print( F("标准 (100%)") );
+  else client.print( F("--") );
+  client.print( F("</div></div></div>"));
+
+  // Filament / AMS Box
+  client.print( F("<div id=\"pAmsBox\" style=\"margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.06);display:none\">"
+                  "<div class=\"m-label\" style=\"margin-bottom:8px\">🧵 耗材状态</div>"
+                  "<div id=\"pAmsSlots\" style=\"display:flex;gap:8px;flex-wrap:wrap\"></div></div></div>"));
 
   // Card 1: Device Status
   client.print( F("<div class=\"glass\"><h2>设备状态</h2>"));
@@ -1192,7 +1354,89 @@ void sendEspHomeHtml(WiFiClient &client) {
   client.print( F("window.addEventListener('DOMContentLoaded', function(){initScheduleUI();refreshStatus();});\n"));
 
   client.print(
-      F("function refreshStatus(){\n"
+      F("function fmtSt(st,prg,on){\n"
+        "  if(!on)return{t:'离线',c:'badge muted'};\n"
+        "  st=(st||'').toLowerCase();\n"
+        "  if(st==='running'||st==='printing')return{t:'打印中',c:'badge ok'};\n"
+        "  if(st==='prepare'||st==='preparing'||st==='heatbed'||st==='homing')return{t:'准备中',c:'badge info'};\n"
+        "  if(st==='pause'||st==='paused')return{t:'已暂停',c:'badge warn'};\n"
+        "  if(st==='finish'||st==='finished'||st==='done'||prg>=100)return{t:'已完成',c:'badge ok'};\n"
+        "  if(st==='failed'||st==='error')return{t:'异常中断',c:'badge err'};\n"
+        "  if(st==='idle')return{t:'待机中',c:'badge muted'};\n"
+        "  return{t:st?st.toUpperCase():'空闲',c:'badge muted'};\n"
+        "}\n"
+        "function fmtSpd(lvl,mag){\n"
+        "  var n='标准';\n"
+        "  if(lvl===1)n='静音';else if(lvl===3)n='运动';else if(lvl===4)n='狂暴';\n"
+        "  return mag>0?n+' ('+mag+'%)':n;\n"
+        "}\n"
+        "function fmtRem(m,st,prg){\n"
+        "  if(st==='finish'||prg>=100)return '已完成';\n"
+        "  if(m===undefined||m<0)return '--';\n"
+        "  if(m===0)return '即将完成';\n"
+        "  var h=Math.floor(m/60),rm=m%60;\n"
+        "  return h>0?(h+'小时 '+rm+'分'):(rm+'分钟');\n"
+        "}\n"
+        "function updatePrinterUI(d){\n"
+        "  var sb=document.getElementById('pStatusBadge');\n"
+        "  var si=fmtSt(d.status,d.progress,d.online!==false);\n"
+        "  if(sb){sb.className=si.c;sb.textContent=si.t;}\n"
+        "  var pv=document.getElementById('pProgressVal'),pb=document.getElementById('pProgressBar');\n"
+        "  if(d.progress!==undefined&&d.progress>=0){\n"
+        "    if(pv)pv.textContent=Math.round(d.progress)+'%';\n"
+        "    if(pb)pb.style.width=Math.min(100,Math.max(0,d.progress))+'%';\n"
+        "  }else{\n"
+        "    if(pv)pv.textContent=(d.status==='finish'?'100%':'--');\n"
+        "    if(pb)pb.style.width=(d.status==='finish'?'100%':'0%');\n"
+        "  }\n"
+        "  var pr=document.getElementById('pRemain');if(pr)pr.textContent=fmtRem(d.remaining_min,d.status,d.progress);\n"
+        "  var pl=document.getElementById('pLayer');\n"
+        "  if(pl){\n"
+        "    if(d.current_layer!==undefined&&d.current_layer>=0){\n"
+        "      pl.textContent=(d.total_layers>0)?(d.current_layer+' / '+d.total_layers):String(d.current_layer);\n"
+        "    }else{pl.textContent='--';}\n"
+        "  }\n"
+        "  var pn=document.getElementById('pNozzle');\n"
+        "  if(pn){\n"
+        "    if(d.dual_nozzle){\n"
+        "      pn.textContent=(d.left_nozzle_temp>0?d.left_nozzle_temp.toFixed(1):'--')+' / '+(d.right_nozzle_temp>0?d.right_nozzle_temp.toFixed(1):'--')+' ℃';\n"
+        "    }else if(d.nozzle_temp!==undefined&&d.nozzle_temp>0){\n"
+        "      pn.textContent=Number(d.nozzle_temp).toFixed(1)+' ℃';\n"
+        "    }else{pn.textContent='-- ℃';}\n"
+        "  }\n"
+        "  var pt=document.getElementById('pBed');\n"
+        "  if(pt)pt.textContent=(d.bed_temp!==undefined&&d.bed_temp>0)?(Number(d.bed_temp).toFixed(1)+' ℃'):'-- ℃';\n"
+        "  var pc=document.getElementById('pChamber');\n"
+        "  if(pc)pc.textContent=(d.chamber_temp!==undefined&&d.chamber_temp>0)?(Number(d.chamber_temp).toFixed(1)+' ℃'):'--';\n"
+        "  var ps=document.getElementById('pSpeed');\n"
+        "  if(ps)ps.textContent=(d.spd_lvl!==undefined&&d.spd_lvl>0)?fmtSpd(d.spd_lvl,d.spd_mag):'--';\n"
+        "  var amsHtml='';\n"
+        "  if(d.ams&&Array.isArray(d.ams)){\n"
+        "    d.ams.forEach(function(s){\n"
+        "      var cls='ams-pill'+(s.active?' active':'');\n"
+        "      var rem=s.remain>=0?(' '+s.remain+'%'):'';\n"
+        "      amsHtml+='<div class=\"'+cls+'\">'+\n"
+        "        '<span class=\"ams-dot\" style=\"background:'+(s.color||'#fff')+'\"></span>'+\n"
+        "        '<span style=\"color:#fff;font-weight:600\">'+(s.type||('槽位'+(s.id+1)))+'</span>'+\n"
+        "        (rem?'<span style=\"color:#8e8e93\">'+rem+'</span>':'')+\n"
+        "        '</div>';\n"
+        "    });\n"
+        "  }\n"
+        "  if(d.ext){\n"
+        "    var clsExt='ams-pill'+(d.ext.active?' active':'');\n"
+        "    var remExt=d.ext.remain>=0?(' '+d.ext.remain+'%'):'';\n"
+        "    amsHtml+='<div class=\"'+clsExt+'\">'+\n"
+        "      '<span class=\"ams-dot\" style=\"background:'+(d.ext.color||'#fff')+'\"></span>'+\n"
+        "      '<span style=\"color:#fff;font-weight:600\">外挂 '+(d.ext.type||'')+'</span>'+\n"
+        "      (remExt?'<span style=\"color:#8e8e93\">'+remExt+'</span>':'')+\n"
+        "      '</div>';\n"
+        "  }\n"
+        "  var ab=document.getElementById('pAmsBox'),as=document.getElementById('pAmsSlots');\n"
+        "  if(ab&&as){\n"
+        "    if(amsHtml){as.innerHTML=amsHtml;ab.style.display='block';}else{ab.style.display='none';}\n"
+        "  }\n"
+        "}\n"
+        "function refreshStatus(){\n"
         "  fetch('/api/status',{cache:'no-store'}).then(r=>r.json()).then(d=>{\n"
         "    let l=document.getElementById('log');if(l&&l.style.display==='block')l.textContent=JSON.stringify(d,null,2);\n"
         "    if(d.brightness!==undefined){\n"
@@ -1222,6 +1466,7 @@ void sendEspHomeHtml(WiFiClient &client) {
         "        var btn=document.getElementById('lc'+idx);if(btn)btn.classList.add('active');\n"
         "      }\n"
         "    }\n"
+        "    updatePrinterUI(d);\n"
         "  }).catch(e=>{});\n"
         "}\n"
         "setInterval(function(){if(!document.hidden)refreshStatus();},5000);\n"));
