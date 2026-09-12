@@ -256,6 +256,7 @@ void restartEspServer();
 bool isEspServerListening();
 String normalizedModelName(const String &value);
 bool chamberFallbackAllowedForModel(const String &value);
+bool modelHasChamberSensor(const String &value);
 
 bool wifiHasIp() { return WiFi.localIP() != IPAddress(0, 0, 0, 0); }
 
@@ -745,7 +746,9 @@ String statusJson() {
   doc["right_nozzle_temp"] = pr.rightNozzleTemp;
   doc["dual_nozzle"] = pr.dualNozzle;
   doc["bed_temp"] = pr.bedTemp;
-  doc["chamber_temp"] = pr.chamberTemp;
+  bool hasChamber = modelHasChamberSensor(pr.model.length() ? pr.model : stored.model);
+  doc["has_chamber_sensor"] = hasChamber;
+  doc["chamber_temp"] = hasChamber ? pr.chamberTemp : -1;
   doc["remaining_min"] = pr.remainingMin;
   doc["current_layer"] = pr.currentLayer;
   doc["total_layers"] = pr.totalLayers;
@@ -764,7 +767,8 @@ String statusJson() {
                  (uint8_t)(pr.amsSlots[i].trayColor >> 8));
         t["color"] = hex;
         t["type"] = pr.amsSlots[i].trayType;
-        t["remain"] = pr.amsSlots[i].remain;
+        t["remain"] = (pr.amsSlots[i].isOfficial && pr.amsSlots[i].remain >= 0 && pr.amsSlots[i].remain <= 100) ? pr.amsSlots[i].remain : -1;
+        t["official"] = pr.amsSlots[i].isOfficial;
         t["active"] = (pr.activeTray == i);
       }
     }
@@ -778,7 +782,8 @@ String statusJson() {
              (uint8_t)(pr.extSlot.trayColor >> 8));
     ext["color"] = hex;
     ext["type"] = pr.extSlot.trayType;
-    ext["remain"] = pr.extSlot.remain;
+    ext["remain"] = (pr.extSlot.isOfficial && pr.extSlot.remain >= 0 && pr.extSlot.remain <= 100) ? pr.extSlot.remain : -1;
+    ext["official"] = pr.extSlot.isOfficial;
     ext["active"] = (pr.activeTray == 254 || pr.activeTray == 255);
   }
   String out;
@@ -1180,7 +1185,9 @@ void sendEspHomeHtml(WiFiClient &client) {
 
   // 5. Chamber Temp
   client.print( F("<div class=\"metric-item\"><div class=\"m-label\">📦 机箱温度</div><div id=\"pChamber\" class=\"m-val\">"));
-  if (pr.chamberTemp > 0) {
+  if (!modelHasChamberSensor(modelName)) {
+    client.print( F("N/A") );
+  } else if (pr.chamberTemp > 0) {
     client.print( String(pr.chamberTemp, 1) + " ℃" );
   } else {
     client.print( F("--") );
@@ -1377,6 +1384,10 @@ void sendEspHomeHtml(WiFiClient &client) {
         "  var h=Math.floor(m/60),rm=m%60;\n"
         "  return h>0?(h+'小时 '+rm+'分'):(rm+'分钟');\n"
         "}\n"
+        "function hasChamber(m){\n"
+        "  m=(m||'').toUpperCase().replace(/[^A-Z0-9]/g,'');\n"
+        "  return m!=='P1S'&&m!=='P1P'&&m!=='A1'&&m!=='A1MINI';\n"
+        "}\n"
         "function updatePrinterUI(d){\n"
         "  var sb=document.getElementById('pStatusBadge');\n"
         "  var si=fmtSt(d.status,d.progress,d.online!==false);\n"
@@ -1407,14 +1418,22 @@ void sendEspHomeHtml(WiFiClient &client) {
         "  var pt=document.getElementById('pBed');\n"
         "  if(pt)pt.textContent=(d.bed_temp!==undefined&&d.bed_temp>0)?(Number(d.bed_temp).toFixed(1)+' ℃'):'-- ℃';\n"
         "  var pc=document.getElementById('pChamber');\n"
-        "  if(pc)pc.textContent=(d.chamber_temp!==undefined&&d.chamber_temp>0)?(Number(d.chamber_temp).toFixed(1)+' ℃'):'--';\n"
+        "  if(pc){\n"
+        "    if(d.has_chamber_sensor===false||(d.model&&!hasChamber(d.model))){\n"
+        "      pc.textContent='N/A';\n"
+        "    }else if(d.chamber_temp!==undefined&&d.chamber_temp>0){\n"
+        "      pc.textContent=Number(d.chamber_temp).toFixed(1)+' ℃';\n"
+        "    }else{\n"
+        "      pc.textContent='--';\n"
+        "    }\n"
+        "  }\n"
         "  var ps=document.getElementById('pSpeed');\n"
         "  if(ps)ps.textContent=(d.spd_lvl!==undefined&&d.spd_lvl>0)?fmtSpd(d.spd_lvl,d.spd_mag):'--';\n"
         "  var amsHtml='';\n"
         "  if(d.ams&&Array.isArray(d.ams)){\n"
         "    d.ams.forEach(function(s){\n"
         "      var cls='ams-pill'+(s.active?' active':'');\n"
-        "      var rem=s.remain>=0?(' '+s.remain+'%'):'';\n"
+        "      var rem=(s.official&&s.remain>=0&&s.remain<=100)?(' '+s.remain+'%'):'';\n"
         "      amsHtml+='<div class=\"'+cls+'\">'+\n"
         "        '<span class=\"ams-dot\" style=\"background:'+(s.color||'#fff')+'\"></span>'+\n"
         "        '<span style=\"color:#fff;font-weight:600\">'+(s.type||('槽位'+(s.id+1)))+'</span>'+\n"
@@ -1424,7 +1443,7 @@ void sendEspHomeHtml(WiFiClient &client) {
         "  }\n"
         "  if(d.ext){\n"
         "    var clsExt='ams-pill'+(d.ext.active?' active':'');\n"
-        "    var remExt=d.ext.remain>=0?(' '+d.ext.remain+'%'):'';\n"
+        "    var remExt=(d.ext.official&&d.ext.remain>=0&&d.ext.remain<=100)?(' '+d.ext.remain+'%'):'';\n"
         "    amsHtml+='<div class=\"'+clsExt+'\">'+\n"
         "      '<span class=\"ams-dot\" style=\"background:'+(d.ext.color||'#fff')+'\"></span>'+\n"
         "      '<span style=\"color:#fff;font-weight:600\">外挂 '+(d.ext.type||'')+'</span>'+\n"
@@ -1451,7 +1470,6 @@ void sendEspHomeHtml(WiFiClient &client) {
         "      if(st){\n"
         "        var txt=d.status;\n"
         "        if(d.progress>=0)txt+=' ('+d.progress+'%)';\n"
-        "        if(d.nozzle_temp>0)txt+=' 喷嘴:'+d.nozzle_temp+'℃';\n"
         "        st.textContent=txt;\n"
         "      }\n"
         "    }\n"
