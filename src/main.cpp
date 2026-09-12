@@ -1041,16 +1041,16 @@ void sendEspHomeHtml(WiFiClient &client) {
 
   // Card 1: Device Status
   client.print( F("<div class=\"glass\"><h2>设备状态</h2>"));
-  client.print( F("<div class=\"row\"><span class=\"label\">打印机</span><span "
-            "class=\"value\">"));
+  client.print( F("<div class=\"row\"><span class=\"label\">打印机</span><span id=\"stPrinter\" class=\"value\">"));
   client.print( htmlEscape(selected.length() ? selected : String("未选择")));
   client.print( F("</span></div>"));
-  client.print( F("<div class=\"row\"><span class=\"label\">机型</span><span "
-            "class=\"value\">"));
+  client.print( F("<div class=\"row\"><span class=\"label\">机型</span><span id=\"stModel\" class=\"value\">"));
   client.print( htmlEscape(modelName));
   client.print( F("</span></div>"));
-  client.print( F("<div class=\"row\"><span class=\"label\">MQTT</span><span "
-            "class=\"value\"><span class=\"badge "));
+  client.print( F("<div class=\"row\"><span class=\"label\">状态</span><span id=\"stStatus\" class=\"value\">"));
+  client.print( htmlEscape(pr.status.length() ? pr.status : String("待机")));
+  client.print( F("</span></div>"));
+  client.print( F("<div class=\"row\"><span class=\"label\">MQTT</span><span id=\"stMqtt\" class=\"value\"><span class=\"badge "));
   client.print( mqttNet.connected() ? F("ok") : F("err"));
   client.print( F("\">"));
   client.print( mqttNet.connected() ? F("已连接") : F("未连接"));
@@ -1189,29 +1189,53 @@ void sendEspHomeHtml(WiFiClient &client) {
   client.print( F("  }\n"));
   client.print( F("  updateManualBrightnessState();\n"));
   client.print( F("}\n"));
-  client.print( F("window.addEventListener('DOMContentLoaded', initScheduleUI);\n"));
+  client.print( F("window.addEventListener('DOMContentLoaded', function(){initScheduleUI();refreshStatus();});\n"));
 
   client.print(
-      F("function "
-        "refreshStatus(){fetch('/api/"
-        "status',{cache:'no-store'}).then(r=>r.json()).then(d=>{let "
-        "l=document.getElementById('log');if(l&&l.style.display==='block')l."
-        "textContent=JSON.stringify(d,null,2);if(d.brightness!==undefined){var "
-        "br=document.getElementById('br'),bv=document.getElementById('bv');if("
-        "br)br.value=d.brightness;if(bv)bv.textContent=d.brightness+'%';}})."
-        "catch(e=>{});}\n"));
-  client.print( F("setInterval(function(){if(!document.hidden)refreshStatus();},8000);\n"));
+      F("function refreshStatus(){\n"
+        "  fetch('/api/status',{cache:'no-store'}).then(r=>r.json()).then(d=>{\n"
+        "    let l=document.getElementById('log');if(l&&l.style.display==='block')l.textContent=JSON.stringify(d,null,2);\n"
+        "    if(d.brightness!==undefined){\n"
+        "      var br=document.getElementById('br'),bv=document.getElementById('bv');\n"
+        "      if(br&&document.activeElement!==br)br.value=d.brightness;\n"
+        "      if(bv)bv.textContent=d.brightness+'%';\n"
+        "    }\n"
+        "    if(d.name){var p=document.getElementById('stPrinter');if(p)p.textContent=d.name;}\n"
+        "    if(d.model){var m=document.getElementById('stModel');if(m)m.textContent=d.model;}\n"
+        "    if(d.status!==undefined){\n"
+        "      var st=document.getElementById('stStatus');\n"
+        "      if(st){\n"
+        "        var txt=d.status;\n"
+        "        if(d.progress>=0)txt+=' ('+d.progress+'%)';\n"
+        "        if(d.nozzle_temp>0)txt+=' 喷嘴:'+d.nozzle_temp+'℃';\n"
+        "        st.textContent=txt;\n"
+        "      }\n"
+        "    }\n"
+        "    if(d.mqtt_connected!==undefined){\n"
+        "      var mq=document.getElementById('stMqtt');\n"
+        "      if(mq)mq.innerHTML=d.mqtt_connected?'<span class=\"badge ok\">已连接</span>':'<span class=\"badge err\">未连接</span>';\n"
+        "    }\n"
+        "    if(d.layout){\n"
+        "      var idx=['classic','dashboard','clock'].indexOf(d.layout);\n"
+        "      if(idx>=0){\n"
+        "        document.querySelectorAll('.segmented button').forEach(b=>b.classList.remove('active'));\n"
+        "        var btn=document.getElementById('lc'+idx);if(btn)btn.classList.add('active');\n"
+        "      }\n"
+        "    }\n"
+        "  }).catch(e=>{});\n"
+        "}\n"
+        "setInterval(function(){if(!document.hidden)refreshStatus();},5000);\n"));
   client.print(
       F("function toggleJson(btn){const "
         "el=document.getElementById('log');if(el.style.display==='none'||!el."
         "style.display){el.style.display='block';refreshStatus();btn."
         "textContent='隐藏 "
         "JSON'}else{el.style.display='none';btn.textContent='查看 JSON'}}\n"));
-  client.print( F("function "
-            "postConfig(data){fetch('/api/"
-            "config',{method:'POST',headers:{'Content-Type':'application/"
-            "json'},body:JSON.stringify(data)}).then(()=>refreshStatus())."
-            "catch(e=>console.error(e));}\n"));
+  client.print( F("function postConfig(data){\n"
+                  "  fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})\n"
+                  "  .then(r=>r.json()).then(d=>{if(d&&d.ok)refreshStatus();})\n"
+                  "  .catch(e=>console.error(e));\n"
+                  "}\n"));
   client.print( F("let "
             "brt=document.getElementById('br');if(brt){brt.addEventListener('"
             "input',function(){document.getElementById('bv').textContent=this."
@@ -1364,13 +1388,18 @@ String applyConfigBody(const String &body, int &statusCode) {
     stored.alias = alias;
     cache.baseDrawn = false;
   }
+  bool layoutChanged = false;
   if (layout[0]) {
     String nextLayout = layout;
     nextLayout.toLowerCase();
-    stored.layout = nextLayout == "dashboard" ? "dashboard"
-                    : nextLayout == "clock"   ? "clock"
-                                              : "classic";
-    cache.baseDrawn = false;
+    nextLayout = nextLayout == "dashboard" ? "dashboard"
+                 : nextLayout == "clock"   ? "clock"
+                                           : "classic";
+    if (stored.layout != nextLayout) {
+      stored.layout = nextLayout;
+      layoutChanged = true;
+      cache.baseDrawn = false;
+    }
   }
   if (aliasBitmapHex[0] || doc["alias_bitmap_hex"].is<const char *>()) {
     stored.aliasBitmapHex = aliasBitmapHex;
@@ -1393,7 +1422,8 @@ String applyConfigBody(const String &body, int &statusCode) {
       brightnessChanged = true;
     }
   }
-  bool ok = saveStoredConfig();
+  bool anyConfigChanged = wifiChanged || mqttChanged || brightnessChanged || scheduleChanged || layoutChanged;
+  bool ok = anyConfigChanged ? saveStoredConfig() : true;
   if (wifiChanged) {
     wifiReconnectPending = true;
   } else if (mqttChanged) {
@@ -1531,9 +1561,9 @@ void handleApiClient() {
   if (!client)
     return;
 
-  // Wait max 100ms for initial HTTP request bytes to arrive
+  // Wait max 400ms for initial HTTP request bytes to arrive
   unsigned long startWait = millis();
-  while (!client.available() && client.connected() && (millis() - startWait < 100)) {
+  while (!client.available() && client.connected() && (millis() - startWait < 400)) {
     delay(2);
   }
   if (!client.available()) {
@@ -1742,7 +1772,6 @@ bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
   while (!mqttNet.available()) {
     if (!mqttNet.connected() || millis() - start > timeoutMs)
       return false;
-    handleApiClient();
     delay(1);
   }
   int header = mqttNet.read();
@@ -1755,9 +1784,10 @@ bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
   do {
     start = millis();
     while (!mqttNet.available()) {
-      if (!mqttNet.connected() || millis() - start > timeoutMs)
+      if (!mqttNet.connected() || millis() - start > 1500) {
+        mqttNet.stop();
         return false;
-      handleApiClient();
+      }
       delay(1);
     }
     digit = mqttNet.read();
@@ -1769,9 +1799,10 @@ bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
     for (size_t i = 0; i < len; ++i) {
       start = millis();
       while (!mqttNet.available()) {
-        if (!mqttNet.connected() || millis() - start > timeoutMs)
+        if (!mqttNet.connected() || millis() - start > 1500) {
+          mqttNet.stop();
           return false;
-        handleApiClient();
+        }
         delay(1);
       }
       mqttNet.read();
@@ -1783,9 +1814,11 @@ bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
   while (got < len) {
     start = millis();
     while (!mqttNet.available()) {
-      if (!mqttNet.connected() || millis() - start > timeoutMs)
+      if (!mqttNet.connected() || millis() - start > 2500) {
+        // Halfway packet timeout: stream desynchronized, must reset TLS socket
+        mqttNet.stop();
         return false;
-      handleApiClient();
+      }
       delay(1);
     }
     int n = mqttNet.read(body + got, len - got);
@@ -2351,7 +2384,7 @@ void mqttHandleIncoming() {
   while (mqttNet.connected() && mqttNet.available()) {
     uint8_t type = 0;
     size_t len = 0;
-    if (!mqttReadPacket(&type, mqttBuf, sizeof(mqttBuf), &len, 100))
+    if (!mqttReadPacket(&type, mqttBuf, sizeof(mqttBuf), &len, 200))
       return;
     if (type == 3 && len > 2) {
       uint16_t topicLen = ((uint16_t)mqttBuf[0] << 8) | mqttBuf[1];
