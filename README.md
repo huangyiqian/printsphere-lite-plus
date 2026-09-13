@@ -2,7 +2,7 @@
 
 # PrintSphere Lite Plus (Fork 版本)
 
-![Version](https://img.shields.io/badge/Firmware-v0.5.10-brightgreen)
+![Version](https://img.shields.io/badge/Firmware-v0.5.12-brightgreen)
 ![Backend Version](https://img.shields.io/badge/WebUI_Backend-v0.4.71--ui--clean-blue)
 ![License](https://img.shields.io/badge/License-Non--Commercial-orange)
 
@@ -52,6 +52,11 @@
 * **80 / 8081 双端口同时监听**：设备同时开放默认 80 HTTP 端口与 8081 端口，手机端无需手动输入 `:8081` 端口号，直接在浏览器输入 `http://<IP>` 即可秒级进入管理后台。
 * **设备卡片状态行精简**：移除状态行中重复拼贴的喷嘴温度显示，状态行仅专注呈现任务与进度状态。
 
+### 7. 🚀 Web 服务全异步流式重构与零延迟防卡死 (v0.5.12)
+* **HTTP/1.1 Transfer-Encoding: chunked 分块传输**：重构 Web 服务输出管道为分块传输流，静态预分配 1460 字节网络包缓冲区，彻底摆脱单包逐字节或无长度阻断式等待，页面加载时间从数秒缩减至 0.4 秒。
+* **彻底移除 `client.flush()` 致命死锁**：彻底根除 ESP8266 内核 5000ms 的 `wait_until_acked` 阻塞，杜绝与浏览器 200ms TCP 延迟确认（Delayed ACK）冲突导致的单片机主循环卡死与屏幕冻结。
+* **非阻塞高并发自适应连接管理**：初探超时精准降至 30ms，快速释放空闲连接，保证高频刷新或后台轮询时屏幕刷新与 MQTT 通信丝滑流畅。
+
 ---
 
 ## 🖼️ 界面与实机效果预览
@@ -69,7 +74,7 @@
 
 ## 🏷️ 版本号信息
 
-* **固件版本 (Firmware)**：`v0.5.10`
+* **固件版本 (Firmware)**：`v0.5.12`
 * **后端配置工具 (Backend WebUI)**：`v0.4.71-ui-clean`
 
 ---

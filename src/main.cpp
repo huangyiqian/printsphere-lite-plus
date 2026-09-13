@@ -19,7 +19,7 @@ BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
 
-const char *FIRMWARE_VERSION = "firmware-v0.5.11";
+const char *FIRMWARE_VERSION = "firmware-v0.5.12";
 
 // Color definitions for BGR565 display panel ((B<<11) | (G<<5) | R)
 #define BG_BLACK 0x0000
@@ -932,11 +932,71 @@ bool selectPrinterBySerial(const String &serial) {
   return false;
 }
 
-void sendEspHomeHtml(WiFiClient &client) {
-  client.print(F("HTTP/1.1 200 OK\r\n"
-                 "Content-Type: text/html; charset=utf-8\r\n"
-                 "Cache-Control: no-store\r\n"
-                 "Connection: close\r\n\r\n"));
+class ChunkedBufferedPrinter : public Print {
+  WiFiClient& client;
+  static uint8_t buf[1460];
+  size_t pos;
+  bool finished;
+public:
+  ChunkedBufferedPrinter(WiFiClient& c) : client(c), pos(0), finished(false) {}
+  ~ChunkedBufferedPrinter() {
+    finish();
+  }
+  size_t write(uint8_t c) override {
+    if (finished) return 0;
+    buf[pos++] = c;
+    if (pos >= sizeof(buf)) flushBuffer();
+    return 1;
+  }
+  size_t write(const uint8_t *buffer, size_t size) override {
+    if (finished) return 0;
+    size_t written = 0;
+    while (size > 0) {
+      size_t space = sizeof(buf) - pos;
+      size_t chunk = size < space ? size : space;
+      memcpy(buf + pos, buffer, chunk);
+      pos += chunk;
+      written += chunk;
+      buffer += chunk;
+      size -= chunk;
+      if (pos >= sizeof(buf)) flushBuffer();
+    }
+    return written;
+  }
+  void flushBuffer() {
+    if (pos > 0 && client.connected()) {
+      client.printf("%X\r\n", pos);
+      client.write(buf, pos);
+      client.print("\r\n");
+      pos = 0;
+    }
+  }
+  void flush() {
+    flushBuffer();
+  }
+  void finish() {
+    if (finished) return;
+    finished = true;
+    flushBuffer();
+    if (client.connected()) {
+      client.print("0\r\n\r\n");
+    }
+    client.stop(50);
+  }
+  void stop() {
+    finish();
+  }
+};
+uint8_t ChunkedBufferedPrinter::buf[1460];
+
+void sendEspHomeHtml(WiFiClient &realClient) {
+  realClient.print(F("HTTP/1.1 200 OK\r\n"
+                     "Content-Type: text/html; charset=utf-8\r\n"
+                     "Transfer-Encoding: chunked\r\n"
+                     "Cache-Control: no-store\r\n"
+                     "Connection: close\r\n\r\n"));
+
+  ChunkedBufferedPrinter client(realClient);
 
   String ip = WiFi.localIP().toString();
   String selected = stored.name.length() ? stored.name : stored.serial;
@@ -1554,9 +1614,7 @@ void sendEspHomeHtml(WiFiClient &client) {
   client.print( F("});\n"));
   client.print( F("</script></body></html>"));
 
-  client.flush();
-  delay(1);
-  client.stop();
+  client.finish();
 }
 
 
@@ -1798,9 +1856,7 @@ void sendHttpJson(WiFiClient &client, int statusCode, const String &body) {
   client.print("Connection: close\r\n");
   client.printf("Content-Length: %u\r\n\r\n", body.length());
   client.print(body);
-  client.flush();
-  delay(1);
-  client.stop();
+  client.stop(50);
 }
 
 void sendHttpHtml(WiFiClient &client, const String &body) {
@@ -1810,9 +1866,7 @@ void sendHttpHtml(WiFiClient &client, const String &body) {
   client.print("Connection: close\r\n");
   client.printf("Content-Length: %u\r\n\r\n", body.length());
   client.print(body);
-  client.flush();
-  delay(1);
-  client.stop();
+  client.stop(50);
 }
 
 void queueHttpConfig(WiFiClient &client, const String &body) {
@@ -1835,13 +1889,13 @@ void handleApiClient() {
   if (!client)
     return;
 
-  // Wait max 400ms for initial HTTP request bytes to arrive
+  // Wait max 30ms for initial HTTP request bytes to arrive
   unsigned long startWait = millis();
-  while (!client.available() && client.connected() && (millis() - startWait < 400)) {
-    delay(2);
+  while (!client.available() && client.connected() && (millis() - startWait < 30)) {
+    delay(1);
   }
   if (!client.available()) {
-    client.stop();
+    client.stop(10);
     return;
   }
 
@@ -1894,8 +1948,7 @@ void handleApiClient() {
         "points='13,75 47,60 47,107 13,107' fill='#ffffff'/><polygon "
         "points='53,13 87,13 87,55 53,39' fill='#ffffff'/><polygon "
         "points='53,45 87,61 87,107 53,107' fill='#ffffff'/></svg>");
-    client.flush();
-    client.stop();
+    client.stop(50);
   } else if (method == "GET" &&
              (path == "/api/status" || path == "/api/ping")) {
     sendHttpJson(client, 200, statusJson());

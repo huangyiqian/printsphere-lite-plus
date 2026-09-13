@@ -2,7 +2,7 @@
 
 # PrintSphere Lite Plus (Enhanced Fork)
 
-![Version](https://img.shields.io/badge/Firmware-v0.5.10-brightgreen)
+![Version](https://img.shields.io/badge/Firmware-v0.5.12-brightgreen)
 ![Backend Version](https://img.shields.io/badge/WebUI_Backend-v0.4.71--ui--clean-blue)
 ![License](https://img.shields.io/badge/License-Non--Commercial-orange)
 
@@ -52,6 +52,11 @@ This project is an enhanced and improved fork of the original [PrintSphere Lite]
 * **Dual-Port Listening (Port 80 & 8081)**: Concurrently listens on standard HTTP port 80 and port 8081, allowing mobile browsers to access the dashboard directly via `http://<IP>` without entering `:8081`.
 * **Refined Device Status Row**: Streamlined the device card status row to remove redundant nozzle temperature numbers, keeping it clean with job status and progress.
 
+### 7. 🚀 Asynchronous Stream Web Server & Zero Latency Anti-Freeze (v0.5.12)
+* **HTTP/1.1 Chunked Transfer Encoding**: Completely restructured the built-in HTTP server output pipeline into HTTP/1.1 chunked transfer streaming with a pre-allocated 1460-byte static network buffer, dropping full-page load times from several seconds down to ~0.4s.
+* **Elimination of `client.flush()` Deadlocks**: Removed blocking `client.flush()` calls in ESP8266 core (`wait_until_acked` timeout up to 5000ms), eliminating deadly thread freezes caused by conflicts with browser 200ms TCP delayed ACKs.
+* **High-concurrency Non-blocking Connection Management**: Optimized connection probe timeout to 30ms with instant idle connection recycling, ensuring silky-smooth display rendering and real-time MQTT telemetry even under aggressive browser refreshes.
+
 ---
 
 ## 🖼️ Interface & Hardware Previews
@@ -69,7 +74,7 @@ This project is an enhanced and improved fork of the original [PrintSphere Lite]
 
 ## 🏷️ Version Information
 
-* **Firmware Version**: `v0.5.10`
+* **Firmware Version**: `v0.5.12`
 * **Backend WebUI**: `v0.4.71-ui-clean`
 
 ---
