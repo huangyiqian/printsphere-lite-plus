@@ -19,7 +19,7 @@ BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
 
-const char *FIRMWARE_VERSION = "firmware-v0.5.13";
+const char *FIRMWARE_VERSION = "firmware-v0.5.14";
 
 // Color definitions for BGR565 display panel ((B<<11) | (G<<5) | R)
 #define BG_BLACK 0x0000
@@ -267,6 +267,19 @@ bool modelHasChamberSensor(const String &value);
 bool wifiHasIp() { return WiFi.localIP() != IPAddress(0, 0, 0, 0); }
 
 bool httpNetworkReady() { return wifiHasIp(); }
+
+void triggerMqttReconnect(const char *reason) {
+  if (reason && strlen(reason) > 0) {
+    lastMqttError = reason;
+    Serial.printf("[MQTT] %s, triggering reconnect\n", reason);
+  }
+  mqttNet.stop();
+  mqttForceConnect = true;
+  lastMqttConnect = 0;
+  mqttReconnectDelay = MQTT_RECONNECT_INTERVAL;
+  pr.online = false;
+  displayDirty = true;
+}
 
 bool configClientConnected() { return false; }
 
@@ -2177,13 +2190,18 @@ bool mqttReadPacket(uint8_t *headerOut, uint8_t *body, size_t bodySize,
                     size_t *bodyLen, uint32_t timeoutMs) {
   uint32_t start = millis();
   while (!mqttNet.available()) {
-    if (!mqttNet.connected() || millis() - start > timeoutMs)
+    if (!mqttNet.connected() || millis() - start > timeoutMs) {
+      if (!mqttNet.connected())
+        mqttNet.stop();
       return false;
+    }
     delay(1);
   }
   int header = mqttNet.read();
-  if (header < 0)
+  if (header < 0) {
+    mqttNet.stop();
     return false;
+  }
 
   size_t len = 0;
   int multiplier = 1;
@@ -2215,8 +2233,10 @@ bool mqttReadPacket(uint8_t *headerOut, uint8_t *body, size_t bodySize,
     start = millis();
     while (!mqttNet.available()) {
       if (!mqttNet.connected() || millis() - start > 5000) {
-        // Inter-fragment timeout: stream desynchronized, must reset TLS socket
-        Serial.println("MQTT inter-fragment timeout (>5s)");
+        char sslErr[64] = {0};
+        mqttNet.getLastSSLError(sslErr, sizeof(sslErr));
+        Serial.printf("MQTT inter-fragment timeout (>5s): got=%u len=%u conn=%d ssl=%s heap=%u\n",
+                      (unsigned)got, (unsigned)len, (int)mqttNet.connected(), sslErr, ESP.getFreeHeap());
         mqttNet.stop();
         return false;
       }
@@ -2335,8 +2355,11 @@ void mqttSendPing() {
   if (!mqttNet.connected())
     return;
   const uint8_t ping[2] = {0xC0, 0x00};
-  mqttNet.write(ping, 2);
+  size_t sent = mqttNet.write(ping, 2);
   lastMqttPing = millis();
+  if (sent != 2) {
+    triggerMqttReconnect("PING write failed");
+  }
 }
 
 void mqttSendPuback(uint16_t packetId) {
@@ -2344,14 +2367,18 @@ void mqttSendPuback(uint16_t packetId) {
     return;
   const uint8_t puback[4] = {
       0x40, 0x02, (uint8_t)(packetId >> 8), (uint8_t)(packetId & 0xff)};
-  mqttNet.write(puback, 4);
+  if (mqttNet.write(puback, 4) != 4) {
+    triggerMqttReconnect("PUBACK write failed");
+  }
 }
 
 void publishMqttRequest(const char *payload) {
   if (!mqttNet.connected())
     return;
   String topic = requestTopic();
-  mqttSendPublish(topic, payload);
+  if (!mqttSendPublish(topic, payload)) {
+    triggerMqttReconnect("PUBLISH write failed");
+  }
 }
 
 void requestPrinterState() {
@@ -2650,7 +2677,11 @@ void applyPrint(JsonObject print) {
   else if (!print["spdMag"].isNull())
     pr.spdMag = print["spdMag"] | 100;
 
-  pr.online = true;
+  if (hasToken(pr.status, "offline") || hasToken(pr.status, "disconnect")) {
+    pr.online = false;
+  } else {
+    pr.online = true;
+  }
   displayDirty = true;
 }
 
@@ -2849,8 +2880,20 @@ void parseMqttPayload(uint8_t *payload, size_t length) {
   if (err) {
     Serial.printf("JSON parse err: %s (len: %u, free heap: %u)\n",
                   err.c_str(), (unsigned)length, ESP.getFreeHeap());
+    static uint8_t jsonErrCount = 0;
+    jsonErrCount++;
+    if (jsonErrCount >= 3) {
+      jsonErrCount = 0;
+      triggerMqttReconnect("Repeated JSON parse failures");
+    }
     return;
   }
+
+  const char *res = doc["result"] | doc["print"]["result"] | "";
+  if (strcmp(res, "fail") == 0 || strcmp(res, "failed") == 0) {
+    Serial.printf("[MQTT] Cloud returned failure: %s\n", res);
+  }
+
   applyPrint(doc["print"].as<JsonObject>());
   applyExtruderFromRawPayload(payload, length);
 }
@@ -2859,8 +2902,12 @@ void mqttHandleIncoming() {
   while (mqttNet.connected() && mqttNet.available()) {
     uint8_t header = 0;
     size_t len = 0;
-    if (!mqttReadPacket(&header, mqttBuf, sizeof(mqttBuf), &len, 200))
+    if (!mqttReadPacket(&header, mqttBuf, sizeof(mqttBuf), &len, 200)) {
+      if (!mqttNet.connected()) {
+        triggerMqttReconnect("Socket closed during read");
+      }
       return;
+    }
     uint8_t type = header >> 4;
     if (type == 3 && len > 2) {
       lastMqttDataReceived = millis();
@@ -2880,6 +2927,9 @@ void mqttHandleIncoming() {
       }
     } else if (type == 13) {
       lastMqttDataReceived = millis();
+    } else if (type == 14) {
+      triggerMqttReconnect("Broker sent DISCONNECT");
+      return;
     }
   }
 }
@@ -2923,11 +2973,16 @@ bool connectMqtt() {
   lastMqttError = "";
   lastMqttDataReceived = millis();
   mqttReconnectDelay = MQTT_RECONNECT_INTERVAL;
+  pr.online = true;
   publishMqttRequest(
       "{\"info\":{\"sequence_id\":\"0\",\"command\":\"get_version\"}}");
   publishMqttRequest(
       "{\"pushing\":{\"sequence_id\":\"0\",\"command\":\"start\"}}");
-  resetLivePrintFields();
+  static String lastSubscribedSerial = "";
+  if (lastSubscribedSerial != stored.serial) {
+    lastSubscribedSerial = stored.serial;
+    resetLivePrintFields();
+  }
   requestPrinterState();
   Serial.print("Cloud MQTT subscribed: ");
   Serial.println(topic);
@@ -3133,7 +3188,14 @@ void drawLabels() {
   tft.drawString("BED", 175, 107);
 }
 
+bool isPrinterOnline() {
+  return mqttNet.connected() && pr.online &&
+         !hasToken(pr.status, "offline") && !hasToken(pr.status, "disconnect");
+}
+
 String statusText() {
+  if (!isPrinterOnline())
+    return "offline";
   if (isPrintingState(pr.status))
     return "printing";
   if (isPreparingState(pr.status))
@@ -3148,6 +3210,8 @@ String statusText() {
 }
 
 uint16_t statusColor() {
+  if (!isPrinterOnline())
+    return C_ORANGE;
   if (isPrintingState(pr.status))
     return C_RING;
   if (isPreparingState(pr.status))
@@ -3165,6 +3229,8 @@ void drawBold(const String &text, int x, int y);
 String fitTextToWidth(String text, uint8_t font, int maxWidth, bool bold);
 
 String dashboardStatusText() {
+  if (!isPrinterOnline())
+    return "OFFLINE";
   if (isPrintingState(pr.status))
     return "PRINT";
   if (isPreparingState(pr.status))
@@ -3614,7 +3680,7 @@ void drawDashboardFields() {
     tft.drawString(model.length() ? model : "--", 24, 13);
 
     // Right: Status + LED
-    uint16_t ledColor = pr.online ? statusColor() : C_ORANGE;
+    uint16_t ledColor = isPrinterOnline() ? statusColor() : C_ORANGE;
     tft.fillCircle(206, 21, 4, ledColor);
 
     tft.setTextDatum(TR_DATUM);
@@ -4373,6 +4439,10 @@ void loop() {
 
   if (!configMode && WiFi.status() == WL_CONNECTED && mqttConfigReady()) {
     if (!mqttNet.connected()) {
+      if (pr.online) {
+        pr.online = false;
+        displayDirty = true;
+      }
       if (mqttForceConnect || (now - lastMqttConnect >= mqttReconnectDelay)) {
         mqttForceConnect = false;
         lastMqttConnect = now;

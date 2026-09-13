@@ -2,7 +2,7 @@
 
 # PrintSphere Lite Plus (Enhanced Fork)
 
-![Version](https://img.shields.io/badge/Firmware-v0.5.13-brightgreen)
+![Version](https://img.shields.io/badge/Firmware-v0.5.14-brightgreen)
 ![Backend Version](https://img.shields.io/badge/WebUI_Backend-v0.4.71--ui--clean-blue)
 ![License](https://img.shields.io/badge/License-Non--Commercial-orange)
 
@@ -58,6 +58,13 @@ This project is an enhanced and improved fork of the original [PrintSphere Lite]
 * **Data-Ready Priority & Lenient Mobile Wi-Fi Window**: Overhauled `handleApiClient()` to prioritize `hasClientData()` ready connections (0ms delay), and provides a safe 600ms grace window with `ESP.wdtFeed()` and `optimistic_yield(1000)` for mobile devices under 802.11 power save, completely fixing the 100% mobile access failure bug.
 * **Elimination of `client.flush()` Deadlocks**: Removed blocking `client.flush()` calls in ESP8266 core (`wait_until_acked` timeout up to 5000ms), eliminating deadly thread freezes caused by conflicts with browser 200ms TCP delayed ACKs.
 
+### 8. 🛡️ MQTT Invalid Return Value Validation, Auto-Reconnect & Status Hardening (v0.5.14)
+* **Comprehensive Low-Level Return Value Validation**: Added strict write byte-count checks on `mqttSendPing()`, `publishMqttRequest()`, and `mqttSendPuback()`, instantly triggering reconnection upon write failure; `mqttReadPacket()` automatically terminates the socket on read errors or negative headers to prevent BearSSL/lwIP half-open deadlocks.
+* **Protocol-Level Disconnect & Error Resilience**: Added detection for MQTT DISCONNECT (Type 14) packets; automatically triggers reconnection if 3 consecutive JSON deserialization errors occur.
+* **Eliminate False-Positive Reconnection Loops**: Resolved timestamp underflow/miscalculation after handshake, preventing premature timeout disconnect loops and ensuring rock-solid MQTT persistence.
+* **Fix Top-Right "OFFLINE" Display When Telemetry Updates**: Overhauled `isPrinterOnline()` status evaluation; accurately displays `PRINT` / `PREP` / `PAUSE` / `DONE` / `ERR` / `IDLE` when valid telemetry arrives, only reverting to `OFFLINE` when disconnected or when the printer is genuinely offline.
+* **Preserve Screen Telemetry Across Reconnects**: Reconnecting to the same printer preserves last-known metrics rather than clearing everything to `--`; accurately shows `OFFLINE` status and orange indicators during disconnection.
+
 ---
 
 ## 🖼️ Interface & Hardware Previews
@@ -75,7 +82,7 @@ This project is an enhanced and improved fork of the original [PrintSphere Lite]
 
 ## 🏷️ Version Information
 
-* **Firmware Version**: `v0.5.13`
+* **Firmware Version**: `v0.5.14`
 * **Backend WebUI**: `v0.4.71-ui-clean`
 
 ---

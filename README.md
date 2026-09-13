@@ -2,7 +2,7 @@
 
 # PrintSphere Lite Plus (Fork 版本)
 
-![Version](https://img.shields.io/badge/Firmware-v0.5.13-brightgreen)
+![Version](https://img.shields.io/badge/Firmware-v0.5.14-brightgreen)
 ![Backend Version](https://img.shields.io/badge/WebUI_Backend-v0.4.71--ui--clean-blue)
 ![License](https://img.shields.io/badge/License-Non--Commercial-orange)
 
@@ -58,6 +58,13 @@
 * **数据就绪优先接纳与宽容等待**：重构 `handleApiClient()`，优先处理 `hasClientData()` 已就绪连接（0ms 延时）；针对手机 Wi-Fi 节能模式连接提供 600ms 宽容等待并协同 `ESP.wdtFeed()` / `optimistic_yield(1000)`，彻底修复同网关下移动设备 100% 无法访问后台的问题。
 * **彻底移除 `client.flush()` 致命死锁**：彻底根除 ESP8266 内核 5000ms 的 `wait_until_acked` 阻塞，杜绝与浏览器 200ms TCP 延迟确认（Delayed ACK）冲突导致的单片机主循环卡死与屏幕冻结。
 
+### 8. 🛡️ MQTT 返回值有效性校验、断线自动重连与状态显示加固 (v0.5.14)
+* **全链路拦截底层无效返回值**：`mqttSendPing()`（心跳）、`publishMqttRequest()`（状态查询）与 `mqttSendPuback()` 均加入底层写入字节数严格校验，一旦写入失败立即触发自动重连；`mqttReadPacket()` 遇到读取失败或负值 header 时主动关闭 socket 并启动重连，彻底防止 BearSSL/lwIP 半开假死。
+* **协议层断开包与解析异常防御**：新增 MQTT DISCONNECT (Type 14) 协议包识别；连续 3 次 JSON 解析失败自动判定流乱序并重启连接。
+* **彻底消除断连误判死循环**：排除了由于时间戳计算导致握手后误判超时的恶性断连死循环，保持 MQTT 链路持久稳定。
+* **彻底修复「有数据更新右上角仍显示 OFFLINE」Bug**：重构 `isPrinterOnline()` 判定逻辑，接收到打印机有效遥测数据时实时精准展示 `PRINT` / `PREP` / `PAUSE` / `DONE` / `ERR` / `IDLE` 状态指示；仅在网络彻底断开或打印机明确处于离线时才显示 `OFFLINE`。
+* **修复断连屏幕空白与无信息**：同一台设备断线重连时保留最后有效数据，不再暴力将指标清空为 `--`，提升离线时的可读性。
+
 ---
 
 ## 🖼️ 界面与实机效果预览
@@ -75,7 +82,7 @@
 
 ## 🏷️ 版本号信息
 
-* **固件版本 (Firmware)**：`v0.5.13`
+* **固件版本 (Firmware)**：`v0.5.14`
 * **后端配置工具 (Backend WebUI)**：`v0.4.71-ui-clean`
 
 ---
