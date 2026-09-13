@@ -84,8 +84,11 @@ Copy-Optional (Join-Path (Join-CnPath $sourceFlasherDir $nameDriver) "CH341SER.E
 
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip -Force
 
-$desktopZip = "C:\Users\huangyiqian\Desktop\PrintSphere_Lite_v0.4.95extfix.zip"
-Copy-Item -LiteralPath $zip -Destination $desktopZip -Force
+$desktop = [Environment]::GetFolderPath("Desktop")
+$desktopZip = if ($desktop -and (Test-Path $desktop)) { Join-Path $desktop "PrintSphere_Lite.zip" } else { $null }
+if ($desktopZip) {
+  Copy-Item -LiteralPath $zip -Destination $desktopZip -Force
+}
 
 Write-Host ""
 Write-Host "Release package created successfully!"

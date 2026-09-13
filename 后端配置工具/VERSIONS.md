@@ -2,6 +2,7 @@
 
 | 版本 | 日期 | 改动 | 影响范围 | 回退说明 |
 |---|---|---|---|---|
+| firmware-v0.5.11 | 2026-09-13 | MQTT 偶现连不上与无法更新稳定性重大重构：将细碎逐字节写入升级为整包单次 TLS Record 发送，彻底解决 TCP 延迟与云端断连；重写动态重连退避机制（3s 起步），修复开机 30 秒连接闭锁；停止每 5 秒一次全量 pushall 泛洪，改为依赖打印机主动推送流 + 30 秒静默兜底，避免云端限流；BearSSL 接收缓冲扩充至 1024 字节，分片超时放宽至 5000ms；静态单次初始化 100+ 项 JSON 过滤树并全局复用 JsonDocument，彻底消除堆内存碎片化与 NoMemory 静默丢包；完善 QoS 1 解析与 PUBACK 自动应答；状态接口输出 MQTT 诊断错误 | 影响 ESP MQTT 连接稳定性、状态解析更新、内存使用与断线自愈；不影响屏幕 UI 绘制与 Web 端口逻辑 | 回退 `src/main.cpp` 与 `src/config.h` 即可恢复 v0.5.10 |
 | firmware-v0.5.10 | 2026-09-12 | ESP 内置 Web 页面新增「打印机实时状态」专属板块（状态胶囊、双色渐变进度条、6格实时指标、AMS与外挂耗材胶囊）；针对 A1/A1 mini/P1P/P1S 无仓温机型智能显示 N/A；第三方耗材自动隐藏余量百分比；同时监听 80 与 8081 端口，支持手机直接免端口输入访问后台；精简设备卡片状态行 | 影响 ESP Web 页面渲染与端口监听；不改云 MQTT 链路与主屏幕渲染 | 回退 `src/main.cpp` 的 `sendEspHomeHtml` 与 `handleApiClient` 即可恢复 v0.5.00 |
 | firmware-v0.5.00 | 2026-09-12 | ESP 内置 Web (8081) 后台长时间运行稳定性深度加固：重构 HTML 页面为 PROGMEM 逐段流式输出，动态堆内存峰值降为 0 字节；增加 lwIP `_listen_pcb` 监听活性校验与自动自愈，杜绝端口僵死；移除 WiFi 抖动时主动 close 避免 TCP PCB 耗尽；限制投机连接等待 100ms 防止阻塞主循环；前端 8 秒智能静默轮询避免 TIME_WAIT 堆积；新增外壳模型链接 | 影响 ESP 8081 Web 服务、状态接口和主循环稳定性；不改云 MQTT 主链路、不改屏幕渲染 | 回退 `src/main.cpp` 的 `sendEspHomeHtml` 与 `handleApiClient` 即可恢复 v0.4.95 |
 | firmware-v0.4.95extfix | 2026-08-29 | 支持无 AMS 时自适应单 ext 外挂料槽排版，隐藏冗余空槽位；智能识别官方 RFID 耗材与第三方/自定义耗材，第三方耗材自动隐藏余量百分比 | 影响信息面板 Dashboard 耗材槽位渲染及 RFID 校验；不改云 MQTT、后端流程 | 回退 `drawDashboardFields` 与 `AmsTrayInfo` 即可恢复 v0.4.90 |

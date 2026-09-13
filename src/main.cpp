@@ -19,7 +19,7 @@ BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
 
-const char *FIRMWARE_VERSION = "firmware-v0.5.10";
+const char *FIRMWARE_VERSION = "firmware-v0.5.11";
 
 // Color definitions for BGR565 display panel ((B<<11) | (G<<5) | R)
 #define BG_BLACK 0x0000
@@ -235,6 +235,10 @@ unsigned long lastDisplay = 0;
 unsigned long lastMqttConnect = 0;
 unsigned long lastMqttRequest = 0;
 unsigned long lastMqttPing = 0;
+unsigned long lastMqttDataReceived = 0;
+uint32_t mqttReconnectDelay = MQTT_RECONNECT_INTERVAL;
+bool mqttForceConnect = true;
+String lastMqttError = "";
 uint16_t mqttPacketId = 1;
 bool displayDirty = true;
 bool serverStarted = false;
@@ -736,6 +740,9 @@ String statusJson() {
   doc["mqtt_host"] = stored.mqttHost;
   doc["mqtt_username"] = stored.mqttUsername.length() ? "set" : "";
   doc["mqtt_connected"] = mqttNet.connected();
+  if (lastMqttError.length() > 0) {
+    doc["mqtt_error"] = lastMqttError;
+  }
   doc["brightness"] = appliedBrightness;
   doc["free_heap"] = ESP.getFreeHeap();
   doc["printer_count"] = printerOptionCount;
@@ -2018,26 +2025,34 @@ String reportTopic() { return String("device/") + stored.serial + "/report"; }
 
 String requestTopic() { return String("device/") + stored.serial + "/request"; }
 
-void mqttWriteRemainingLength(size_t len) {
+void mqttBufferRemainingLength(uint8_t *buf, size_t &pos, size_t len) {
   do {
     uint8_t digit = len % 128;
     len /= 128;
     if (len > 0)
       digit |= 0x80;
-    mqttNet.write(&digit, 1);
+    buf[pos++] = digit;
   } while (len > 0);
 }
 
-void mqttWriteByte(uint8_t value) { mqttNet.write(&value, 1); }
-
-void mqttWriteString(const String &value) {
-  uint16_t len = value.length();
-  mqttWriteByte((uint8_t)(len >> 8));
-  mqttWriteByte((uint8_t)(len & 0xff));
-  mqttNet.write((const uint8_t *)value.c_str(), len);
+void mqttBufferByte(uint8_t *buf, size_t &pos, uint8_t value) {
+  buf[pos++] = value;
 }
 
-bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
+void mqttBufferString(uint8_t *buf, size_t &pos, const String &value) {
+  uint16_t len = value.length();
+  buf[pos++] = (uint8_t)(len >> 8);
+  buf[pos++] = (uint8_t)(len & 0xff);
+  memcpy(buf + pos, value.c_str(), len);
+  pos += len;
+}
+
+void mqttBufferBytes(uint8_t *buf, size_t &pos, const uint8_t *data, size_t len) {
+  memcpy(buf + pos, data, len);
+  pos += len;
+}
+
+bool mqttReadPacket(uint8_t *headerOut, uint8_t *body, size_t bodySize,
                     size_t *bodyLen, uint32_t timeoutMs) {
   uint32_t start = millis();
   while (!mqttNet.available()) {
@@ -2055,7 +2070,7 @@ bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
   do {
     start = millis();
     while (!mqttNet.available()) {
-      if (!mqttNet.connected() || millis() - start > 1500) {
+      if (!mqttNet.connected() || millis() - start > 3000) {
         mqttNet.stop();
         return false;
       }
@@ -2066,18 +2081,11 @@ bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
     multiplier *= 128;
   } while (digit & 128);
 
-  if (len > bodySize) {
-    for (size_t i = 0; i < len; ++i) {
-      start = millis();
-      while (!mqttNet.available()) {
-        if (!mqttNet.connected() || millis() - start > 1500) {
-          mqttNet.stop();
-          return false;
-        }
-        delay(1);
-      }
-      mqttNet.read();
-    }
+  // If packet length exceeds available body buffer (-1 for null-terminator)
+  if (len >= bodySize) {
+    Serial.printf("MQTT packet exceeds buffer (%u >= %u), resetting socket\n",
+                  (unsigned)len, (unsigned)bodySize);
+    mqttNet.stop();
     return false;
   }
 
@@ -2085,8 +2093,9 @@ bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
   while (got < len) {
     start = millis();
     while (!mqttNet.available()) {
-      if (!mqttNet.connected() || millis() - start > 2500) {
-        // Halfway packet timeout: stream desynchronized, must reset TLS socket
+      if (!mqttNet.connected() || millis() - start > 5000) {
+        // Inter-fragment timeout: stream desynchronized, must reset TLS socket
+        Serial.println("MQTT inter-fragment timeout (>5s)");
         mqttNet.stop();
         return false;
       }
@@ -2097,8 +2106,11 @@ bool mqttReadPacket(uint8_t *type, uint8_t *body, size_t bodySize,
       got += (size_t)n;
   }
 
-  *type = (uint8_t)header >> 4;
-  *bodyLen = len;
+  body[got] = '\0'; // Always ensure safe null termination
+  if (headerOut)
+    *headerOut = (uint8_t)header;
+  if (bodyLen)
+    *bodyLen = got;
   return true;
 }
 
@@ -2106,54 +2118,112 @@ bool mqttSendConnect() {
   String clientId = String("PrintSphereLite-") + String(ESP.getChipId(), HEX);
   size_t remaining = 10 + 2 + clientId.length() + 2 +
                      stored.mqttUsername.length() + 2 + stored.token.length();
-  mqttWriteByte(0x10);
-  mqttWriteRemainingLength(remaining);
-  mqttWriteString("MQTT");
-  mqttWriteByte(4);
-  mqttWriteByte(0xC2);
-  mqttWriteByte(0);
-  mqttWriteByte(60);
-  mqttWriteString(clientId);
-  mqttWriteString(stored.mqttUsername);
-  mqttWriteString(stored.token);
+  size_t pos = 0;
+  mqttBufferByte(mqttBuf, pos, 0x10);
+  mqttBufferRemainingLength(mqttBuf, pos, remaining);
+  mqttBufferString(mqttBuf, pos, "MQTT");
+  mqttBufferByte(mqttBuf, pos, 4);    // protocol level 4 (MQTT 3.1.1)
+  mqttBufferByte(mqttBuf, pos, 0xC2); // connect flags: username, password, clean session
+  mqttBufferByte(mqttBuf, pos, 0);    // keepalive MSB
+  mqttBufferByte(mqttBuf, pos, 60);   // keepalive LSB (60 seconds)
+  mqttBufferString(mqttBuf, pos, clientId);
+  mqttBufferString(mqttBuf, pos, stored.mqttUsername);
+  mqttBufferString(mqttBuf, pos, stored.token);
 
-  uint8_t type = 0;
-  size_t len = 0;
-  if (!mqttReadPacket(&type, mqttBuf, sizeof(mqttBuf), &len, 3000))
+  size_t sent = mqttNet.write(mqttBuf, pos);
+  if (sent != pos) {
+    lastMqttError = "CONNECT write failed";
+    Serial.println("Cloud MQTT CONNECT write failed");
     return false;
-  return type == 2 && len >= 2 && mqttBuf[1] == 0;
+  }
+
+  uint8_t header = 0;
+  size_t len = 0;
+  if (!mqttReadPacket(&header, mqttBuf, sizeof(mqttBuf), &len, 6000)) {
+    lastMqttError = "CONNACK timeout";
+    Serial.println("Cloud MQTT CONNACK timeout");
+    return false;
+  }
+  uint8_t type = header >> 4;
+  if (type == 2 && len >= 2 && mqttBuf[1] == 0) {
+    return true;
+  }
+  char errBuf[32];
+  snprintf(errBuf, sizeof(errBuf), "CONNACK rejected (%d)", (len >= 2 ? mqttBuf[1] : -1));
+  lastMqttError = errBuf;
+  Serial.printf("Cloud MQTT auth rejected code=%d\n", (len >= 2 ? mqttBuf[1] : -1));
+  return false;
 }
 
 bool mqttSendSubscribe(const String &topic) {
   uint16_t id = mqttPacketId++;
+  if (mqttPacketId == 0)
+    mqttPacketId = 1;
   size_t remaining = 2 + 2 + topic.length() + 1;
-  mqttWriteByte(0x82);
-  mqttWriteRemainingLength(remaining);
-  mqttWriteByte((uint8_t)(id >> 8));
-  mqttWriteByte((uint8_t)(id & 0xff));
-  mqttWriteString(topic);
-  mqttWriteByte(0);
+  size_t pos = 0;
+  mqttBufferByte(mqttBuf, pos, 0x82);
+  mqttBufferRemainingLength(mqttBuf, pos, remaining);
+  mqttBufferByte(mqttBuf, pos, (uint8_t)(id >> 8));
+  mqttBufferByte(mqttBuf, pos, (uint8_t)(id & 0xff));
+  mqttBufferString(mqttBuf, pos, topic);
+  mqttBufferByte(mqttBuf, pos, 0); // QoS 0
 
-  uint8_t type = 0;
+  size_t sent = mqttNet.write(mqttBuf, pos);
+  if (sent != pos) {
+    lastMqttError = "SUBSCRIBE write failed";
+    Serial.println("Cloud MQTT SUBSCRIBE write failed");
+    return false;
+  }
+
+  uint8_t header = 0;
   size_t len = 0;
-  return mqttReadPacket(&type, mqttBuf, sizeof(mqttBuf), &len, 3000) &&
-         type == 9;
+  if (!mqttReadPacket(&header, mqttBuf, sizeof(mqttBuf), &len, 6000)) {
+    lastMqttError = "SUBACK timeout";
+    Serial.println("Cloud MQTT SUBACK timeout");
+    return false;
+  }
+  uint8_t type = header >> 4;
+  return type == 9;
 }
 
 bool mqttSendPublish(const String &topic, const char *payload) {
+  if (!mqttNet.connected())
+    return false;
   size_t payloadLen = strlen(payload);
   size_t remaining = 2 + topic.length() + payloadLen;
-  mqttWriteByte(0x30);
-  mqttWriteRemainingLength(remaining);
-  mqttWriteString(topic);
-  mqttNet.write((const uint8_t *)payload, payloadLen);
-  return true;
+  uint8_t pkt[256];
+  if (1 + 4 + 2 + topic.length() + payloadLen <= sizeof(pkt)) {
+    size_t pos = 0;
+    mqttBufferByte(pkt, pos, 0x30);
+    mqttBufferRemainingLength(pkt, pos, remaining);
+    mqttBufferString(pkt, pos, topic);
+    mqttBufferBytes(pkt, pos, (const uint8_t *)payload, payloadLen);
+    return mqttNet.write(pkt, pos) == pos;
+  }
+  // Fallback for larger payloads
+  size_t pos = 0;
+  mqttBufferByte(pkt, pos, 0x30);
+  mqttBufferRemainingLength(pkt, pos, remaining);
+  mqttBufferString(pkt, pos, topic);
+  if (mqttNet.write(pkt, pos) != pos)
+    return false;
+  return mqttNet.write((const uint8_t *)payload, payloadLen) == payloadLen;
 }
 
 void mqttSendPing() {
-  mqttWriteByte(0xC0);
-  mqttWriteByte(0);
+  if (!mqttNet.connected())
+    return;
+  const uint8_t ping[2] = {0xC0, 0x00};
+  mqttNet.write(ping, 2);
   lastMqttPing = millis();
+}
+
+void mqttSendPuback(uint16_t packetId) {
+  if (!mqttNet.connected())
+    return;
+  const uint8_t puback[4] = {
+      0x40, 0x02, (uint8_t)(packetId >> 8), (uint8_t)(packetId & 0xff)};
+  mqttNet.write(puback, 4);
 }
 
 void publishMqttRequest(const char *payload) {
@@ -2518,150 +2588,177 @@ void applyExtruderFromRawPayload(uint8_t *payload, size_t length) {
   if (!objEnd)
     return;
 
-  JsonDocument extDoc;
+  static JsonDocument extDoc;
+  extDoc.clear();
   if (deserializeJson(extDoc, objStart, (size_t)(objEnd - objStart)))
     return;
   if (applyNozzleInfo(extDoc["info"].as<JsonArray>()))
     displayDirty = true;
 }
 
-void parseMqttPayload(uint8_t *payload, size_t length) {
-  JsonDocument filter;
-  filter["print"]["ams_exist_bits"] = true;
-  filter["print"]["ams"]["ams_exist_bits"] = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_type"] = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_sub_brands"] = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["tray_color"] = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["remain"] = true;
-  filter["print"]["ams"]["ams"][0]["tray"][0]["tag_uid"] = true;
-  filter["print"]["ams"]["tray_now"] = true;
-  filter["print"]["ams"]["vt_tray"]["tray_type"] = true;
-  filter["print"]["ams"]["vt_tray"]["tray_sub_brands"] = true;
-  filter["print"]["ams"]["vt_tray"]["tray_color"] = true;
-  filter["print"]["ams"]["vt_tray"]["remain"] = true;
-  filter["print"]["ams"]["vt_tray"]["tag_uid"] = true;
-  filter["print"]["vt_tray"]["tray_type"] = true;
-  filter["print"]["vt_tray"]["tray_sub_brands"] = true;
-  filter["print"]["vt_tray"]["tray_color"] = true;
-  filter["print"]["vt_tray"]["remain"] = true;
-  filter["print"]["vt_tray"]["tag_uid"] = true;
-  filter["print"]["tag_uid"] = true;
-  filter["print"]["tray_type"] = true;
-  filter["print"]["tray_sub_brands"] = true;
-  filter["print"]["tray_color"] = true;
-  filter["print"]["filament_type"] = true;
-  filter["print"]["remain"] = true;
-  filter["print"]["tray_now"] = true;
-  filter["print"]["subtray_id"] = true;
-  filter["print"]["spd_lvl"] = true;
-  filter["print"]["spd_mag"] = true;
-  filter["print"]["spdLvl"] = true;
-  filter["print"]["spdMag"] = true;
-  filter["print"]["gcode_state"] = true;
-  filter["print"]["print_status"] = true;
-  filter["print"]["printStatus"] = true;
-  filter["print"]["status"] = true;
-  filter["print"]["task_status"] = true;
-  filter["print"]["taskStatus"] = true;
-  filter["print"]["state"] = true;
-  filter["print"]["mc_percent"] = true;
-  filter["print"]["percent"] = true;
-  filter["print"]["progress"] = true;
-  filter["print"]["task_progress"] = true;
-  filter["print"]["taskProgress"] = true;
-  filter["print"]["print_progress"] = true;
-  filter["print"]["printProgress"] = true;
-  filter["print"]["printPercent"] = true;
-  filter["print"]["nozzle_temper"] = true;
-  filter["print"]["nozzle_temp"] = true;
-  filter["print"]["nozzle_temperature"] = true;
-  filter["print"]["nozzleTemperature"] = true;
-  filter["print"]["hotend_temp"] = true;
-  filter["print"]["hotend_temperature"] = true;
-  filter["print"]["tool0_nozzle_temp"] = true;
-  filter["print"]["tool0_nozzle_temper"] = true;
-  filter["print"]["tool1_nozzle_temp"] = true;
-  filter["print"]["tool1_nozzle_temper"] = true;
-  filter["print"]["left_nozzle_temp"] = true;
-  filter["print"]["left_nozzle_temper"] = true;
-  filter["print"]["right_nozzle_temp"] = true;
-  filter["print"]["right_nozzle_temper"] = true;
-  filter["print"]["bed_temper"] = true;
-  filter["print"]["bed_temp"] = true;
-  filter["print"]["bed_temperature"] = true;
-  filter["print"]["bedTemperature"] = true;
-  filter["print"]["hotbed_temper"] = true;
-  filter["print"]["hotbed_temp"] = true;
-  filter["print"]["hotbed_temperature"] = true;
-  filter["print"]["chamber_temper"] = true;
-  filter["print"]["chamber_temp"] = true;
-  filter["print"]["chamber_temperature"] = true;
-  filter["print"]["chamberTemperature"] = true;
-  filter["print"]["chamberTemp"] = true;
-  filter["print"]["chamberTargetTemp"] = true;
-  filter["print"]["chamberTargetTemperature"] = true;
-  filter["print"]["chamber_target_temper"] = true;
-  filter["print"]["chamber_target_temp"] = true;
-  filter["print"]["chamber_target_temperature"] = true;
-  filter["print"]["target_chamber_temp"] = true;
-  filter["print"]["targetChamberTemp"] = true;
-  filter["print"]["ctt"] = true;
-  filter["print"]["device"]["ctc"]["info"]["temp"] = true;
-  filter["print"]["info"]["temp"] = true;
-  filter["print"]["model"] = true;
-  filter["print"]["dev_model_name"] = true;
-  filter["print"]["dev_product_name"] = true;
-  filter["print"]["product_name"] = true;
-  filter["print"]["mc_remaining_time"] = true;
-  filter["print"]["remaining_minutes"] = true;
-  filter["print"]["remainingMinutes"] = true;
-  filter["print"]["remaining_min"] = true;
-  filter["print"]["remain_time"] = true;
-  filter["print"]["remaining_seconds"] = true;
-  filter["print"]["remainingSeconds"] = true;
-  filter["print"]["remaining_time"] = true;
-  filter["print"]["remainingTime"] = true;
-  filter["print"]["mc_left_time"] = true;
-  filter["print"]["layer_num"] = true;
-  filter["print"]["current_layer"] = true;
-  filter["print"]["currentLayer"] = true;
-  filter["print"]["layer"] = true;
-  filter["print"]["total_layer_num"] = true;
-  filter["print"]["total_layers"] = true;
-  filter["print"]["totalLayers"] = true;
-  filter["print"]["layer_count"] = true;
-  filter["print"]["layerCount"] = true;
-  filter["print"]["device"]["bed"]["info"]["temp"] = true;
-  filter["print"]["device"]["bed_temp"] = true;
-  filter["print"]["device"]["extruder"]["info"][0]["id"] = true;
-  filter["print"]["device"]["extruder"]["info"][0]["temp"] = true;
-  filter["print"]["device"]["extruder"]["info"][1]["id"] = true;
-  filter["print"]["device"]["extruder"]["info"][1]["temp"] = true;
-  filter["print"]["device"]["nozzle"]["info"][0]["id"] = true;
-  filter["print"]["device"]["nozzle"]["info"][0]["temp"] = true;
-  filter["print"]["device"]["nozzle"]["info"][1]["id"] = true;
-  filter["print"]["device"]["nozzle"]["info"][1]["temp"] = true;
+static JsonDocument mqttFilter;
+static bool mqttFilterInitialized = false;
 
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(
-      doc, payload, length, DeserializationOption::Filter(filter));
-  if (err)
+void initMqttFilter() {
+  if (mqttFilterInitialized)
     return;
+  mqttFilter["print"]["ams_exist_bits"] = true;
+  mqttFilter["print"]["ams"]["ams_exist_bits"] = true;
+  mqttFilter["print"]["ams"]["ams"][0]["tray"][0]["tray_type"] = true;
+  mqttFilter["print"]["ams"]["ams"][0]["tray"][0]["tray_sub_brands"] = true;
+  mqttFilter["print"]["ams"]["ams"][0]["tray"][0]["tray_color"] = true;
+  mqttFilter["print"]["ams"]["ams"][0]["tray"][0]["remain"] = true;
+  mqttFilter["print"]["ams"]["ams"][0]["tray"][0]["tag_uid"] = true;
+  mqttFilter["print"]["ams"]["tray_now"] = true;
+  mqttFilter["print"]["ams"]["vt_tray"]["tray_type"] = true;
+  mqttFilter["print"]["ams"]["vt_tray"]["tray_sub_brands"] = true;
+  mqttFilter["print"]["ams"]["vt_tray"]["tray_color"] = true;
+  mqttFilter["print"]["ams"]["vt_tray"]["remain"] = true;
+  mqttFilter["print"]["ams"]["vt_tray"]["tag_uid"] = true;
+  mqttFilter["print"]["vt_tray"]["tray_type"] = true;
+  mqttFilter["print"]["vt_tray"]["tray_sub_brands"] = true;
+  mqttFilter["print"]["vt_tray"]["tray_color"] = true;
+  mqttFilter["print"]["vt_tray"]["remain"] = true;
+  mqttFilter["print"]["vt_tray"]["tag_uid"] = true;
+  mqttFilter["print"]["tag_uid"] = true;
+  mqttFilter["print"]["tray_type"] = true;
+  mqttFilter["print"]["tray_sub_brands"] = true;
+  mqttFilter["print"]["tray_color"] = true;
+  mqttFilter["print"]["filament_type"] = true;
+  mqttFilter["print"]["remain"] = true;
+  mqttFilter["print"]["tray_now"] = true;
+  mqttFilter["print"]["subtray_id"] = true;
+  mqttFilter["print"]["spd_lvl"] = true;
+  mqttFilter["print"]["spd_mag"] = true;
+  mqttFilter["print"]["spdLvl"] = true;
+  mqttFilter["print"]["spdMag"] = true;
+  mqttFilter["print"]["gcode_state"] = true;
+  mqttFilter["print"]["print_status"] = true;
+  mqttFilter["print"]["printStatus"] = true;
+  mqttFilter["print"]["status"] = true;
+  mqttFilter["print"]["task_status"] = true;
+  mqttFilter["print"]["taskStatus"] = true;
+  mqttFilter["print"]["state"] = true;
+  mqttFilter["print"]["mc_percent"] = true;
+  mqttFilter["print"]["percent"] = true;
+  mqttFilter["print"]["progress"] = true;
+  mqttFilter["print"]["task_progress"] = true;
+  mqttFilter["print"]["taskProgress"] = true;
+  mqttFilter["print"]["print_progress"] = true;
+  mqttFilter["print"]["printProgress"] = true;
+  mqttFilter["print"]["printPercent"] = true;
+  mqttFilter["print"]["nozzle_temper"] = true;
+  mqttFilter["print"]["nozzle_temp"] = true;
+  mqttFilter["print"]["nozzle_temperature"] = true;
+  mqttFilter["print"]["nozzleTemperature"] = true;
+  mqttFilter["print"]["hotend_temp"] = true;
+  mqttFilter["print"]["hotend_temperature"] = true;
+  mqttFilter["print"]["tool0_nozzle_temp"] = true;
+  mqttFilter["print"]["tool0_nozzle_temper"] = true;
+  mqttFilter["print"]["tool1_nozzle_temp"] = true;
+  mqttFilter["print"]["tool1_nozzle_temper"] = true;
+  mqttFilter["print"]["left_nozzle_temp"] = true;
+  mqttFilter["print"]["left_nozzle_temper"] = true;
+  mqttFilter["print"]["right_nozzle_temp"] = true;
+  mqttFilter["print"]["right_nozzle_temper"] = true;
+  mqttFilter["print"]["bed_temper"] = true;
+  mqttFilter["print"]["bed_temp"] = true;
+  mqttFilter["print"]["bed_temperature"] = true;
+  mqttFilter["print"]["bedTemperature"] = true;
+  mqttFilter["print"]["hotbed_temper"] = true;
+  mqttFilter["print"]["hotbed_temp"] = true;
+  mqttFilter["print"]["hotbed_temperature"] = true;
+  mqttFilter["print"]["chamber_temper"] = true;
+  mqttFilter["print"]["chamber_temp"] = true;
+  mqttFilter["print"]["chamber_temperature"] = true;
+  mqttFilter["print"]["chamberTemperature"] = true;
+  mqttFilter["print"]["chamberTemp"] = true;
+  mqttFilter["print"]["chamberTargetTemp"] = true;
+  mqttFilter["print"]["chamberTargetTemperature"] = true;
+  mqttFilter["print"]["chamber_target_temper"] = true;
+  mqttFilter["print"]["chamber_target_temp"] = true;
+  mqttFilter["print"]["chamber_target_temperature"] = true;
+  mqttFilter["print"]["target_chamber_temp"] = true;
+  mqttFilter["print"]["targetChamberTemp"] = true;
+  mqttFilter["print"]["ctt"] = true;
+  mqttFilter["print"]["device"]["ctc"]["info"]["temp"] = true;
+  mqttFilter["print"]["info"]["temp"] = true;
+  mqttFilter["print"]["model"] = true;
+  mqttFilter["print"]["dev_model_name"] = true;
+  mqttFilter["print"]["dev_product_name"] = true;
+  mqttFilter["print"]["product_name"] = true;
+  mqttFilter["print"]["mc_remaining_time"] = true;
+  mqttFilter["print"]["remaining_minutes"] = true;
+  mqttFilter["print"]["remainingMinutes"] = true;
+  mqttFilter["print"]["remaining_min"] = true;
+  mqttFilter["print"]["remain_time"] = true;
+  mqttFilter["print"]["remaining_seconds"] = true;
+  mqttFilter["print"]["remainingSeconds"] = true;
+  mqttFilter["print"]["remaining_time"] = true;
+  mqttFilter["print"]["remainingTime"] = true;
+  mqttFilter["print"]["mc_left_time"] = true;
+  mqttFilter["print"]["layer_num"] = true;
+  mqttFilter["print"]["current_layer"] = true;
+  mqttFilter["print"]["currentLayer"] = true;
+  mqttFilter["print"]["layer"] = true;
+  mqttFilter["print"]["total_layer_num"] = true;
+  mqttFilter["print"]["total_layers"] = true;
+  mqttFilter["print"]["totalLayers"] = true;
+  mqttFilter["print"]["layer_count"] = true;
+  mqttFilter["print"]["layerCount"] = true;
+  mqttFilter["print"]["device"]["bed"]["info"]["temp"] = true;
+  mqttFilter["print"]["device"]["bed_temp"] = true;
+  mqttFilter["print"]["device"]["extruder"]["info"][0]["id"] = true;
+  mqttFilter["print"]["device"]["extruder"]["info"][0]["temp"] = true;
+  mqttFilter["print"]["device"]["extruder"]["info"][1]["id"] = true;
+  mqttFilter["print"]["device"]["extruder"]["info"][1]["temp"] = true;
+  mqttFilter["print"]["device"]["nozzle"]["info"][0]["id"] = true;
+  mqttFilter["print"]["device"]["nozzle"]["info"][0]["temp"] = true;
+  mqttFilter["print"]["device"]["nozzle"]["info"][1]["id"] = true;
+  mqttFilter["print"]["device"]["nozzle"]["info"][1]["temp"] = true;
+  mqttFilterInitialized = true;
+}
+
+void parseMqttPayload(uint8_t *payload, size_t length) {
+  initMqttFilter();
+  static JsonDocument doc;
+  doc.clear();
+  DeserializationError err = deserializeJson(
+      doc, payload, length, DeserializationOption::Filter(mqttFilter));
+  if (err) {
+    Serial.printf("JSON parse err: %s (len: %u, free heap: %u)\n",
+                  err.c_str(), (unsigned)length, ESP.getFreeHeap());
+    return;
+  }
   applyPrint(doc["print"].as<JsonObject>());
   applyExtruderFromRawPayload(payload, length);
 }
 
 void mqttHandleIncoming() {
   while (mqttNet.connected() && mqttNet.available()) {
-    uint8_t type = 0;
+    uint8_t header = 0;
     size_t len = 0;
-    if (!mqttReadPacket(&type, mqttBuf, sizeof(mqttBuf), &len, 200))
+    if (!mqttReadPacket(&header, mqttBuf, sizeof(mqttBuf), &len, 200))
       return;
+    uint8_t type = header >> 4;
     if (type == 3 && len > 2) {
+      lastMqttDataReceived = millis();
+      uint8_t qos = (header >> 1) & 0x03;
       uint16_t topicLen = ((uint16_t)mqttBuf[0] << 8) | mqttBuf[1];
-      if ((size_t)topicLen + 2 < len) {
-        parseMqttPayload(mqttBuf + 2 + topicLen, len - 2 - topicLen);
+      size_t headerOffset = 2 + topicLen;
+      if (qos > 0 && headerOffset + 2 <= len) {
+        uint16_t packetId = ((uint16_t)mqttBuf[headerOffset] << 8) |
+                            mqttBuf[headerOffset + 1];
+        if (qos == 1) {
+          mqttSendPuback(packetId);
+        }
+        headerOffset += 2;
       }
+      if (headerOffset < len) {
+        parseMqttPayload(mqttBuf + headerOffset, len - headerOffset);
+      }
+    } else if (type == 13) {
+      lastMqttDataReceived = millis();
     }
   }
 }
@@ -2674,15 +2771,20 @@ bool connectMqtt() {
 
   char clientId[48];
   snprintf(clientId, sizeof(clientId), "PrintSphereLite-%06X", ESP.getChipId());
-  Serial.printf("Cloud MQTT connecting %s serial=%s user=%s\n",
+  Serial.printf("Cloud MQTT connecting %s serial=%s user=%s (free heap: %u)\n",
                 stored.mqttHost.c_str(), stored.serial.c_str(),
-                stored.mqttUsername.c_str());
+                stored.mqttUsername.c_str(), ESP.getFreeHeap());
   mqttNet.stop();
   if (!mqttNet.connect(stored.mqttHost.c_str(), MQTT_PORT)) {
-    Serial.println("Cloud MQTT TCP failed");
+    char sslErr[128] = {0};
+    mqttNet.getLastSSLError(sslErr, sizeof(sslErr));
+    lastMqttError = String("TCP/TLS connect failed: ") + sslErr;
+    Serial.printf("Cloud MQTT TCP failed: %s (free heap: %u)\n", sslErr, ESP.getFreeHeap());
     return false;
   }
   if (!mqttSendConnect()) {
+    if (lastMqttError.length() == 0)
+      lastMqttError = "Auth failed";
     Serial.println("Cloud MQTT auth failed");
     mqttNet.stop();
     return false;
@@ -2690,11 +2792,16 @@ bool connectMqtt() {
 
   String topic = reportTopic();
   if (!mqttSendSubscribe(topic)) {
+    if (lastMqttError.length() == 0)
+      lastMqttError = "Subscribe failed";
     Serial.println("Cloud MQTT subscribe failed");
     mqttNet.stop();
     return false;
   }
 
+  lastMqttError = "";
+  lastMqttDataReceived = millis();
+  mqttReconnectDelay = MQTT_RECONNECT_INTERVAL;
   publishMqttRequest(
       "{\"info\":{\"sequence_id\":\"0\",\"command\":\"get_version\"}}");
   publishMqttRequest(
@@ -4061,7 +4168,7 @@ void setup() {
   tft.fillScreen(BG_BLACK);
   drawTextBox(42, 92, 156, 28, 4, C_TEXT, "WIFI...", true);
   mqttNet.setInsecure();
-  mqttNet.setBufferSizes(512, 512);
+  mqttNet.setBufferSizes(1024, 512);
   mqttNet.setTimeout(8000);
   wifiConnect();
   if (wifiHasIp()) {
@@ -4073,6 +4180,7 @@ void setup() {
     startEspServer();
   applyBrightnessSchedule();
   lastMqttConnect = 0;
+  mqttForceConnect = true;
   renderDisplay();
 }
 
@@ -4127,10 +4235,14 @@ void loop() {
     delay(100);
     wifiConnect();
     lastMqttConnect = 0;
+    mqttForceConnect = true;
+    mqttReconnectDelay = MQTT_RECONNECT_INTERVAL;
   } else if (mqttReconnectPending) {
     mqttReconnectPending = false;
     mqttNet.stop();
     lastMqttConnect = 0;
+    mqttForceConnect = true;
+    mqttReconnectDelay = MQTT_RECONNECT_INTERVAL;
   }
 
   if (now - lastWifiCheck > 30000) {
@@ -4143,17 +4255,27 @@ void loop() {
   }
 
   if (!configMode && WiFi.status() == WL_CONNECTED && mqttConfigReady()) {
-    if (!mqttNet.connected() &&
-        now - lastMqttConnect >= MQTT_RECONNECT_INTERVAL) {
-      lastMqttConnect = now;
-      connectMqtt();
-    }
-    mqttHandleIncoming();
-    if (mqttNet.connected() && now - lastMqttRequest >= MQTT_REQUEST_INTERVAL) {
-      requestPrinterState();
-    }
-    if (mqttNet.connected() && now - lastMqttPing >= 30000) {
-      mqttSendPing();
+    if (!mqttNet.connected()) {
+      if (mqttForceConnect || (now - lastMqttConnect >= mqttReconnectDelay)) {
+        mqttForceConnect = false;
+        lastMqttConnect = now;
+        if (!connectMqtt()) {
+          // Dynamic backoff on failure: 3s -> 6s -> 12s -> max 20s
+          if (mqttReconnectDelay < 20000) {
+            mqttReconnectDelay = (mqttReconnectDelay * 2 < 20000) ? (mqttReconnectDelay * 2) : 20000;
+          }
+        }
+      }
+    } else {
+      mqttHandleIncoming();
+      if (now - lastMqttPing >= 30000) {
+        mqttSendPing();
+      }
+      // Silent fallback: only request if no data has been received for MQTT_REQUEST_INTERVAL (30s)
+      if (now - lastMqttDataReceived >= MQTT_REQUEST_INTERVAL &&
+          now - lastMqttRequest >= 15000) {
+        requestPrinterState();
+      }
     }
   }
 
