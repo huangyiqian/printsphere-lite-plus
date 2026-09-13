@@ -19,7 +19,7 @@ BearSSL::WiFiClientSecure mqttNet;
 
 #define LCD_BL_PIN 5
 
-const char *FIRMWARE_VERSION = "firmware-v0.5.12";
+const char *FIRMWARE_VERSION = "firmware-v0.5.13";
 
 // Color definitions for BGR565 display panel ((B<<11) | (G<<5) | R)
 #define BG_BLACK 0x0000
@@ -242,6 +242,7 @@ String lastMqttError = "";
 uint16_t mqttPacketId = 1;
 bool displayDirty = true;
 bool serverStarted = false;
+IPAddress lastRecordedIp = IPAddress(0, 0, 0, 0);
 bool setupApStarted = false;
 bool mqttReconnectPending = false;
 bool wifiReconnectPending = false;
@@ -934,42 +935,79 @@ bool selectPrinterBySerial(const String &serial) {
 
 class ChunkedBufferedPrinter : public Print {
   WiFiClient& client;
-  static uint8_t buf[1460];
+  static uint8_t buf[1024];
   size_t pos;
   bool finished;
 public:
-  ChunkedBufferedPrinter(WiFiClient& c) : client(c), pos(0), finished(false) {}
+  ChunkedBufferedPrinter(WiFiClient& c) : client(c), pos(0), finished(false) {
+    client.setNoDelay(true);
+  }
   ~ChunkedBufferedPrinter() {
     finish();
   }
   size_t write(uint8_t c) override {
-    if (finished) return 0;
+    if (finished || !client.connected()) {
+      finished = true;
+      pos = 0;
+      return 0;
+    }
     buf[pos++] = c;
-    if (pos >= sizeof(buf)) flushBuffer();
+    if (pos >= sizeof(buf)) {
+      flushBuffer();
+    }
     return 1;
   }
   size_t write(const uint8_t *buffer, size_t size) override {
-    if (finished) return 0;
+    if (finished || !client.connected()) {
+      finished = true;
+      pos = 0;
+      return 0;
+    }
     size_t written = 0;
-    while (size > 0) {
+    while (size > 0 && !finished && client.connected()) {
       size_t space = sizeof(buf) - pos;
-      size_t chunk = size < space ? size : space;
-      memcpy(buf + pos, buffer, chunk);
-      pos += chunk;
-      written += chunk;
-      buffer += chunk;
-      size -= chunk;
-      if (pos >= sizeof(buf)) flushBuffer();
+      size_t chunk = (size < space) ? size : space;
+      if (chunk > 0) {
+        memcpy(buf + pos, buffer, chunk);
+        pos += chunk;
+        written += chunk;
+        buffer += chunk;
+        size -= chunk;
+      }
+      if (pos >= sizeof(buf)) {
+        flushBuffer();
+      }
+    }
+    if (!client.connected()) {
+      finished = true;
+      pos = 0;
     }
     return written;
   }
   void flushBuffer() {
-    if (pos > 0 && client.connected()) {
+    if (pos == 0) return;
+    if (client.connected()) {
       client.printf("%X\r\n", pos);
-      client.write(buf, pos);
-      client.print("\r\n");
-      pos = 0;
+      size_t written = 0;
+      unsigned long wStart = millis();
+      while (written < pos && client.connected() && (millis() - wStart < 2500)) {
+        size_t n = client.write(buf + written, pos - written);
+        if (n > 0) {
+          written += n;
+          wStart = millis();
+        } else {
+          delay(1);
+          ESP.wdtFeed();
+          optimistic_yield(1000);
+        }
+      }
+      if (client.connected()) {
+        client.print("\r\n");
+      }
+      ESP.wdtFeed();
+      optimistic_yield(1000);
     }
+    pos = 0;
   }
   void flush() {
     flushBuffer();
@@ -979,17 +1017,19 @@ public:
     finished = true;
     flushBuffer();
     if (client.connected()) {
-      client.print("0\r\n\r\n");
+      client.print(F("0\r\n\r\n"));
+      ESP.wdtFeed();
     }
-    client.stop(50);
+    pos = 0;
   }
   void stop() {
     finish();
   }
 };
-uint8_t ChunkedBufferedPrinter::buf[1460];
+uint8_t ChunkedBufferedPrinter::buf[1024];
 
 void sendEspHomeHtml(WiFiClient &realClient) {
+  realClient.setNoDelay(true);
   realClient.print(F("HTTP/1.1 200 OK\r\n"
                      "Content-Type: text/html; charset=utf-8\r\n"
                      "Transfer-Encoding: chunked\r\n"
@@ -1615,6 +1655,7 @@ void sendEspHomeHtml(WiFiClient &realClient) {
   client.print( F("</script></body></html>"));
 
   client.finish();
+  realClient.stop(100);
 }
 
 
@@ -1843,20 +1884,24 @@ String configBodyFromQuery(const String &query) {
 }
 
 void sendHttpJson(WiFiClient &client, int statusCode, const String &body) {
+  client.setNoDelay(true);
   const char *statusText = statusCode == 200   ? "OK"
                            : statusCode == 202 ? "Accepted"
                            : statusCode == 204 ? "No Content"
                            : statusCode == 400 ? "Bad Request"
                                                : "Not Found";
-  client.printf("HTTP/1.1 %d %s\r\n", statusCode, statusText);
-  client.print("Content-Type: application/json; charset=utf-8\r\n");
-  client.print("Access-Control-Allow-Origin: *\r\n");
-  client.print("Access-Control-Allow-Methods: GET,POST,OPTIONS\r\n");
-  client.print("Access-Control-Allow-Headers: content-type\r\n");
-  client.print("Connection: close\r\n");
-  client.printf("Content-Length: %u\r\n\r\n", body.length());
-  client.print(body);
-  client.stop(50);
+  client.printf("HTTP/1.1 %d %s\r\n"
+                "Content-Type: application/json; charset=utf-8\r\n"
+                "Access-Control-Allow-Origin: *\r\n"
+                "Access-Control-Allow-Methods: GET,POST,OPTIONS\r\n"
+                "Access-Control-Allow-Headers: content-type\r\n"
+                "Connection: close\r\n"
+                "Content-Length: %u\r\n\r\n",
+                statusCode, statusText, (unsigned)body.length());
+  if (body.length()) {
+    client.print(body);
+  }
+  client.stop(100);
 }
 
 void sendHttpHtml(WiFiClient &client, const String &body) {
@@ -1882,28 +1927,41 @@ void queueHttpConfig(WiFiClient &client, const String &body) {
 void handleApiClient() {
   if (!serverStarted)
     return;
-  WiFiClient client = apiServer.accept();
-  if (!client) {
+
+  WiFiClient client;
+  // Prioritize servers that already have incoming HTTP data ready
+  if (apiServer.hasClientData()) {
+    client = apiServer.accept();
+  } else if (webServer80.hasClientData()) {
     client = webServer80.accept();
+  } else if (apiServer.hasClient() || webServer80.hasClient()) {
+    // Client has connected (e.g. mobile phone on Wi-Fi), but first HTTP bytes
+    // are still traversing the wireless link.
+    // Accept the client and give it an adequate window (up to 600ms),
+    // while yielding and feeding watchdog so it never blocks or causes WDT resets.
+    client = apiServer.hasClient() ? apiServer.accept() : webServer80.accept();
+    unsigned long startWait = millis();
+    while (!client.available() && client.connected() && (millis() - startWait < 600)) {
+      delay(2);
+      ESP.wdtFeed();
+      optimistic_yield(1000);
+    }
   }
+
   if (!client)
     return;
 
-  // Wait max 30ms for initial HTTP request bytes to arrive
-  unsigned long startWait = millis();
-  while (!client.available() && client.connected() && (millis() - startWait < 30)) {
-    delay(1);
-  }
   if (!client.available()) {
     client.stop(10);
     return;
   }
 
-  client.setTimeout(600);
+  client.setNoDelay(true);
+  client.setTimeout(1000);
   String line = client.readStringUntil('\n');
   line.trim();
   if (!line.length()) {
-    client.stop();
+    client.stop(10);
     return;
   }
   int firstSpace = line.indexOf(' ');
@@ -1919,7 +1977,7 @@ void handleApiClient() {
   // Drain HTTP headers safely and parse Content-Length if present
   int contentLength = 0;
   unsigned long drainStart = millis();
-  while (client.connected() && (millis() - drainStart < 800)) {
+  while (client.connected() && (millis() - drainStart < 1000)) {
     if (client.available()) {
       String header = client.readStringUntil('\n');
       header.trim();
@@ -1930,6 +1988,8 @@ void handleApiClient() {
       }
     } else {
       delay(1);
+      ESP.wdtFeed();
+      optimistic_yield(1000);
     }
   }
 
@@ -1938,17 +1998,21 @@ void handleApiClient() {
   } else if (method == "GET" && path == "/") {
     sendEspHomeHtml(client);
   } else if (method == "GET" && path == "/favicon.ico") {
-    client.print(
-        "HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\nCache-Control: "
-        "max-age=86400\r\nContent-Length: 326\r\nConnection: close\r\n\r\n");
-    client.print(
+    static const char FAVICON_SVG[] =
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 120'><rect "
         "width='100' height='120' rx='16' fill='#0b0e17'/><polygon "
         "points='13,13 47,13 47,54 13,69' fill='#ffffff'/><polygon "
         "points='13,75 47,60 47,107 13,107' fill='#ffffff'/><polygon "
         "points='53,13 87,13 87,55 53,39' fill='#ffffff'/><polygon "
-        "points='53,45 87,61 87,107 53,107' fill='#ffffff'/></svg>");
-    client.stop(50);
+        "points='53,45 87,61 87,107 53,107' fill='#ffffff'/></svg>";
+    size_t svgLen = strlen(FAVICON_SVG);
+    client.setNoDelay(true);
+    client.printf(
+        "HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\nCache-Control: "
+        "max-age=86400\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
+        (unsigned)svgLen);
+    client.print(FAVICON_SVG);
+    client.stop(100);
   } else if (method == "GET" &&
              (path == "/api/status" || path == "/api/ping")) {
     sendHttpJson(client, 200, statusJson());
@@ -1988,11 +2052,13 @@ void handleApiClient() {
     if (contentLength > 0 && contentLength <= 4096) {
       postBody.reserve(contentLength + 1);
       unsigned long postStart = millis();
-      while ((int)postBody.length() < contentLength && client.connected() && (millis() - postStart < 1500)) {
+      while ((int)postBody.length() < contentLength && client.connected() && (millis() - postStart < 2000)) {
         if (client.available()) {
           postBody += (char)client.read();
         } else {
           delay(1);
+          ESP.wdtFeed();
+          optimistic_yield(1000);
         }
       }
     } else {
@@ -2024,6 +2090,7 @@ void restartEspServer() {
   webServer80.begin();
   if (apiServer.status() != 0) {
     serverStarted = true;
+    lastRecordedIp = WiFi.localIP();
     Serial.printf("ESP server restarted: http://%s:%d/\n",
                   WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT);
   } else {
@@ -2062,6 +2129,7 @@ void startEspServer() {
   webServer80.begin();
   if (apiServer.status() != 0) {
     serverStarted = true;
+    lastRecordedIp = WiFi.localIP();
     Serial.printf("ESP server: http://%s:%d/\n",
                   WiFi.localIP().toString().c_str(), ESP_CONFIG_PORT);
   } else {
@@ -4253,7 +4321,6 @@ void loop() {
 
   // Auto-heal web server: ensure listening whenever WiFi is connected (check every 3s)
   static unsigned long lastServerCheck = 0;
-  static IPAddress lastRecordedIp = IPAddress(0, 0, 0, 0);
 
   if (now - lastServerCheck >= 3000) {
     lastServerCheck = now;
@@ -4261,9 +4328,6 @@ void loop() {
       IPAddress curIp = WiFi.localIP();
       if (!isEspServerListening() || curIp != lastRecordedIp) {
         restartEspServer();
-        if (isEspServerListening()) {
-          lastRecordedIp = curIp;
-        }
       }
     }
   }
